@@ -275,7 +275,7 @@ function panel({ skin = null, logOpen = false, height = null } = {}) {
       <span class="dshtb-title" title="存储：D:\DSH\dsh-home\todo-board\board.json"><b>☑</b> TODO</span>
       <span class="dshtb-sp"></span>
       <span class="dshtb-stats"><i title="未验收">${open}</i>${awaiting > 0 ? `<i title="AI 已完成，等你验收">待验 ${awaiting}</i>` : ''}</span>
-      <button class="dshtb-skin" title="界面：票据\n点击切换下一套（共 3 套）">▤</button>
+      <button class="dshtb-skin" title="界面：蓝白\n点击切换下一套（共 4 套）">◻</button>
       <button class="dshtb-log${logOpen ? ' on' : ''}" title="开发者日志">${logOpen ? '←' : '⚙'}</button>
       <button class="dshtb-fold" title="收起为一行（只留计数与下一条待办）">–</button>
     </div>${
@@ -351,13 +351,26 @@ const TOKENS = `
   --dsw-alias-brand-primary:#5b78ff;--dsw-alias-state-success-primary:#3fb950;
   --dsw-alias-state-warn-primary:#d29922;--dsw-alias-state-error-primary:#f85149;
 }
-html,body{margin:0;height:100%;background:#14161d;color:#e9ebf2;
+html,body{margin:0;height:100%;background:#eef2f9;color:#122240;
   font:13px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif}
 /* The section header's count, as the real header renders it. The plugin's own
    sheet styles the label and the rule, not this number. */
 .dshtb-sect em{font-style:normal;font:600 11px/1 ui-monospace,Consolas,monospace;
   font-variant-numeric:tabular-nums;opacity:.6}
 `
+
+/**
+ * Four panels side by side do not fit a 1440 viewport at full size, so the
+ * gallery is scaled — the looks differ in palette, type scale and row density,
+ * and comparing them is the whole point of the picture.
+ */
+const GALLERY_SCALE = 0.64
+const GALLERY_SKINS = [
+  ['ticket', '蓝白 ticket（默认）'],
+  ['plain', '素白 plain'],
+  ['dense', '紧凑 dense'],
+  ['theme', '随主题 theme'],
+]
 
 /**
  * The three shots.
@@ -403,28 +416,21 @@ const SHOTS = [
     file: 'screenshot-3.png',
     title: 'skins',
     html: `<div class="gallery">
-      ${['ticket', 'plain', 'dense']
-        .map(
-          (s) =>
-            `<figure class="cell"><div class="wrap">${panel({ skin: s, height: PANEL.h })}</div><figcaption>${
-              { ticket: '票据 ticket（默认）', plain: '素白 plain', dense: '紧凑 dense' }[s]
-            }</figcaption></figure>`,
-        )
-        .join('')}
+      ${GALLERY_SKINS.map(
+        ([s, caption]) =>
+          `<figure class="cell"><div class="wrap">${panel({ skin: s, height: PANEL.h })}</div><figcaption>${caption}</figcaption></figure>`,
+      ).join('')}
     </div>`,
     extra: `
       body{display:block}
       .gallery{display:flex;gap:16px;padding:20px;align-items:flex-start}
       .cell{margin:0;flex:0 0 auto}
-      /* Three panels side by side do not fit a 1440 viewport at full size, so the
-         gallery is scaled — the skins differ in type scale and row density, and
-         comparing them is the whole point of the picture. */
-      .cell .wrap{width:${Math.round(PANEL.w * 0.78)}px;height:${Math.round(
-        PANEL.h * 0.78,
-      )}px;overflow:hidden;border-radius:12px;outline:1px solid #242936}
+      .cell .wrap{width:${Math.round(PANEL.w * GALLERY_SCALE)}px;height:${Math.round(
+        PANEL.h * GALLERY_SCALE,
+      )}px;overflow:hidden;border-radius:12px;outline:1px solid #dbe3ef}
       .cell .dshtb-root{position:relative;top:0;right:0;height:${PANEL.h}px;
-        transform:scale(.78);transform-origin:top left}
-      .cell figcaption{padding:9px 2px 0;font:600 12px/1.3 ui-monospace,Consolas,monospace;color:#9aa1b4}`,
+        transform:scale(${GALLERY_SCALE});transform-origin:top left}
+      .cell figcaption{padding:9px 2px 0;font:600 12px/1.3 ui-monospace,Consolas,monospace;color:#64789b}`,
     clip: '.gallery',
   },
   {
@@ -584,7 +590,7 @@ ${body}
     // the product would never show.
     for (const cell of document.querySelectorAll('.cell .wrap')) {
       const card = cell.querySelector('.dshtb-card')
-      if (card) cell.style.height = Math.ceil(card.getBoundingClientRect().height * 0.78) + 'px'
+      if (card) cell.style.height = Math.ceil(card.getBoundingClientRect().height * ${GALLERY_SCALE}) + 'px'
     }
     const sheets = [...document.head.querySelectorAll('style[data-dsh-todo-board]')]
     out.push({ ok: true, sheets: sheets.length, css: sheets.reduce((n, s) => n + s.textContent.length, 0) })

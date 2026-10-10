@@ -6,9 +6,9 @@ var module = { exports: {} }; var exports = module.exports;
  * dsh-todo-board — browser half.
  *
  * Floating board in `shell.overlay` (frame-wide layer, top-right). Design
- * direction: an engineering job ticket — hairline rules, tabular monospace
- * readouts, a square "auto" box versus a round "human" box, and motion used
- * only where it carries meaning (row arrival, a box being checked).
+ * direction: a quiet white card on a blue accent — hairlines instead of
+ * frames, one tinted colour per state, and motion used only where it carries
+ * meaning (row arrival, a box being checked).
  *
  * Transport: GET/POST `/dsh-todo-board/api`.
  * Rows are drag-reorderable; on-screen top-to-bottom order IS the
@@ -75,22 +75,30 @@ const LOST_CHIP = {
 const MONO = 'ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace'
 
 /**
- * The three looks the panel can wear, in cycle order.
+ * The four looks the panel can wear, in cycle order.
  *
- * `ticket` is the default and is deliberately NOT described by a block further
+ * The first is the default and is deliberately NOT described by a block further
  * down: it *is* the base stylesheet, which stays unscoped, and each skin block
  * then states only what it changes. One description of the default look rather
  * than two that can drift apart.
  *
+ * Every colour in that base sheet is a `var(--tb-*)`, which is what lets
+ * `theme` be a palette swap rather than a second copy of every rule: it
+ * re-binds those variables to the GUI's tokens and nothing else.
+ *
  * A skin is presentation only — it may move padding, borders, type and density,
  * but never which control exists, what a control means, or what goes on the
  * wire. The square 「AI 已完成」 box versus the round 「已验收」 box is meaning
- * rather than decoration, so it stays square-and-round in all three.
+ * rather than decoration, so it stays square-and-round in all four.
+ *
+ * The default's id is still `ticket`: that string is what earlier builds wrote
+ * into localStorage, and renaming it would silently drop a stored choice.
  */
 const SKINS = [
-  { id: 'ticket', name: '票据', glyph: '\u25A4', hint: '细线分隔、等宽数字、状态标签带框（默认）' },
-  { id: 'plain', name: '素白', glyph: '\u25FB', hint: '去掉边框与分隔线，留白更多；状态收成一个色点' },
+  { id: 'ticket', name: '蓝白', glyph: '\u25FB', hint: '白底蓝字、状态是一块淡色、留白克制（默认）' },
+  { id: 'plain', name: '素白', glyph: '\u25A4', hint: '去掉卡片边框与分隔线，只靠留白分层；状态收成一个色点' },
   { id: 'dense', name: '紧凑', glyph: '\u2263', hint: '同样极简，字号行距各降一档，一屏能看更多条' },
+  { id: 'theme', name: '随主题', glyph: '\u25D1', hint: '跟 DSH 界面走：深色界面下这块板也是深色的' },
 ]
 
 /**
@@ -101,7 +109,7 @@ const SKINS = [
  * host and browser halves of one release are one build. `client-smoke.mjs` pins
  * the two together, because a footer that lies is worse than no footer.
  */
-const BUILD = '0.12.0'
+const BUILD = '0.13.0'
 
 /**
  * Severity filters in the log view, most severe first.
@@ -118,163 +126,216 @@ const LOG_SOURCE_KEY = 'dsh.todoBoard.logSource.v1'
 const LOG_KEEP = 400
 
 const CSS = `
+/* ---------------------------------------------------------------------------
+   The default look: 「蓝白」 — a white card, blue ink, one soft accent.
+
+   Every colour in this sheet is a var(--tb-*). That is what keeps a skin a
+   skin: the 「随主题」 block further down re-binds those variables to the GUI's
+   own tokens and the whole panel follows the host, while every rule here —
+   layout, type, density, motion — stays exactly as it is. So the panel owns
+   its palette by default and borrows the host's on request, and neither choice
+   costs the other one its design.
+   --------------------------------------------------------------------------- */
 .dshtb-root{position:fixed;top:56px;right:16px;z-index:2147482000;pointer-events:auto;
-  --tb-line:var(--dsw-alias-border-l1);--tb-line2:var(--dsw-alias-border-l2);
-  --tb-bg:var(--dsw-alias-bg-overlay);--tb-dim:var(--dsw-alias-label-secondary);
-  --tb-ink:var(--dsw-alias-label-primary);--tb-accent:var(--dsw-alias-brand-primary);
-  --tb-ok:var(--dsw-alias-state-success-primary);--tb-warn:var(--dsw-alias-state-warn-primary);
+  /* 纸：卡片本身、最浅的一层填充、最深的一层悬停 */
+  --tb-paper:#ffffff;--tb-mist:#f4f7fc;--tb-haze:#e9f0fc;
+  /* 线 */
+  --tb-line:#e3e9f3;--tb-edge:#cdd9ea;
+  /* 字 */
+  --tb-ink:#122240;--tb-dim:#64789b;--tb-faint:#95a4bd;
+  /* 蓝 */
+  --tb-blue:#2f6bff;--tb-blue-deep:#1b53d6;--tb-blue-wash:#eaf1ff;
+  /* 状态色都配一份淡底：状态用色块说，不再用一圈边框说 */
+  --tb-green:#0f9d58;--tb-green-wash:#e7f6ee;
+  --tb-amber:#bd740a;--tb-amber-wash:#fdf2e0;
+  --tb-red:#d92d2d;--tb-red-wash:#fdecec;
+  --tb-ring:rgba(47,107,255,.16);
+  --tb-shadow:0 18px 44px -20px rgba(18,42,86,.30),0 2px 6px -2px rgba(18,42,86,.08);
+  --tb-lift:0 1px 2px rgba(18,42,86,.08);
   display:flex;flex-direction:column;width:380px;max-width:calc(100vw - 32px);
-  max-height:min(80vh,680px);font-size:13px;line-height:1.5;color:var(--tb-ink)}
+  max-height:min(80vh,680px);font-size:13px;line-height:1.5;color:var(--tb-ink);
+  color-scheme:light}
 .dshtb-root *{box-sizing:border-box}
-.dshtb-card{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;border-radius:14px;
-  background:var(--tb-bg);border:1px solid var(--tb-line);overflow:hidden;
-  box-shadow:0 18px 50px -14px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04);
-  animation:dshtb-in .16s ease-out}
+.dshtb-card{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;border-radius:16px;
+  background:var(--tb-paper);border:1px solid var(--tb-line);overflow:hidden;
+  box-shadow:var(--tb-shadow);animation:dshtb-in .16s ease-out}
 .dshtb-resize{position:absolute;right:1px;bottom:1px;width:16px;height:16px;cursor:nwse-resize;
-  opacity:.55;background:
+  opacity:.5;background:
     linear-gradient(135deg,transparent 46%,currentColor 46%,currentColor 54%,transparent 54%),
     linear-gradient(135deg,transparent 68%,currentColor 68%,currentColor 76%,transparent 76%);
-  color:var(--tb-dim)}
-.dshtb-resize:hover{opacity:1;color:var(--tb-ink)}
+  color:var(--tb-faint)}
+.dshtb-resize:hover{opacity:1;color:var(--tb-blue)}
 @keyframes dshtb-in{from{opacity:0;transform:translateY(-6px) scale(.985)}to{opacity:1;transform:none}}
-.dshtb-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+.dshtb-head{display:flex;align-items:center;gap:8px;padding:11px 13px;
   border-bottom:1px solid var(--tb-line);cursor:move;user-select:none}
-.dshtb-title{font-weight:700;letter-spacing:.02em;white-space:nowrap}
-.dshtb-title b{color:var(--tb-accent)}
-.dshtb-stats{display:flex;gap:9px;font:600 11px/1 ${MONO};font-variant-numeric:tabular-nums;
-  color:var(--tb-dim);white-space:nowrap}
-.dshtb-stats i{font-style:normal;display:inline-flex;align-items:center;gap:4px}
-.dshtb-stats i::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
+.dshtb-title{font-weight:700;letter-spacing:.01em;white-space:nowrap}
+.dshtb-title b{color:var(--tb-blue)}
+/* The header counts are badges, not dots: on a white card a tinted pill reads as
+   a number. 待验 (waiting on you) is the only one that gets a colour of its own,
+   because it is the only one that is asking you for something. */
+.dshtb-stats{display:flex;gap:6px;font:600 11px/1 ${MONO};font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.dshtb-stats i{font-style:normal;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;
+  border-radius:7px;background:var(--tb-blue-wash);color:var(--tb-blue-deep)}
+.dshtb-stats i+i{background:var(--tb-amber-wash);color:var(--tb-amber)}
 .dshtb-sp{flex:1}
-/* Two title-bar controls, one geometry: the fold control and the skin control.
-   They stay separate classes because they are separate controls — the fold
-   parks the panel, the skin changes how it looks — and nothing should be able
-   to find one while looking for the other. */
 /* Three title-bar controls, one geometry: the fold control, the skin control
    and the log control. They stay separate classes because they are separate
    controls — the fold parks the panel, the skin changes how it looks, the log
    swaps the page — and nothing should be able to find one while looking for
    another. Only the shared geometry lives in this rule. */
-.dshtb-fold,.dshtb-skin,.dshtb-log{width:26px;height:26px;border:1px solid transparent;border-radius:7px;
-  background:transparent;color:var(--tb-dim);cursor:pointer;font:600 14px/1 ${MONO};padding:0;
-  display:grid;place-items:center;transition:background .12s,color .12s,border-color .12s}
-.dshtb-fold:hover,.dshtb-skin:hover,.dshtb-log:hover{background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);
-  border-color:var(--tb-line2)}
-.dshtb-fold:focus-visible,.dshtb-skin:focus-visible,.dshtb-log:focus-visible{outline:2px solid var(--tb-accent);outline-offset:1px}
+.dshtb-fold,.dshtb-skin,.dshtb-log{width:26px;height:26px;border:1px solid transparent;border-radius:8px;
+  background:transparent;color:var(--tb-faint);cursor:pointer;font:600 14px/1 ${MONO};padding:0;
+  display:grid;place-items:center;transition:background .12s,color .12s}
+.dshtb-fold:hover,.dshtb-skin:hover,.dshtb-log:hover{background:var(--tb-haze);color:var(--tb-blue-deep)}
+.dshtb-fold:focus-visible,.dshtb-skin:focus-visible,.dshtb-log:focus-visible{outline:2px solid var(--tb-blue);outline-offset:1px}
 /* Section label doubling as the fold/unfold control for what follows it. */
-.dshtb-sect{display:flex;align-items:center;gap:6px;width:100%;padding:9px 12px 5px;
+.dshtb-sect{display:flex;align-items:center;gap:6px;width:100%;padding:11px 14px 6px;
   border:0;background:transparent;cursor:pointer;user-select:none;text-align:left;
-  font:600 10.5px/1 ${MONO};letter-spacing:.09em;text-transform:uppercase;color:var(--tb-dim);
+  font:600 11.5px/1 inherit;letter-spacing:.02em;color:var(--tb-dim);
   transition:color .12s}
-.dshtb-sect:hover{color:var(--tb-ink)}
+.dshtb-sect:hover{color:var(--tb-blue-deep)}
 .dshtb-sect::after{content:'';flex:1;height:1px;background:var(--tb-line)}
-.dshtb-sect .car{font:700 11px/1 ${MONO};color:var(--tb-accent)}
-.dshtb-seg{display:flex;gap:2px;margin:9px 12px 0;padding:2px;border-radius:10px;
-  background:var(--dsw-alias-bg-layer-1);border:1px solid var(--tb-line)}
-.dshtb-seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 6px;
-  border:0;border-radius:8px;background:transparent;color:var(--tb-dim);font:inherit;font-size:12px;
-  cursor:pointer;transition:background .12s,color .12s,box-shadow .12s}
+.dshtb-sect .car{font:700 10px/1 ${MONO};color:var(--tb-dim);transition:color .12s}
+.dshtb-sect:hover .car{color:var(--tb-blue)}
+/* The scope switcher: a track, and a white pill for whatever is selected. */
+.dshtb-seg{display:flex;gap:2px;margin:10px 12px 2px;padding:3px;border-radius:12px;
+  background:var(--tb-mist);border:1px solid transparent}
+.dshtb-seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 5px;
+  border:0;border-radius:9px;background:transparent;color:var(--tb-dim);font:inherit;font-size:12.5px;
+  cursor:pointer;transition:background .14s,color .14s,box-shadow .14s}
 .dshtb-seg button:hover{color:var(--tb-ink)}
-.dshtb-seg button.on{background:var(--tb-bg);color:var(--tb-ink);font-weight:600;
-  box-shadow:0 1px 3px rgba(0,0,0,.2)}
-.dshtb-seg em{font-style:normal;font:600 11px/1 ${MONO};font-variant-numeric:tabular-nums;opacity:.6}
-.dshtb-compose{display:flex;flex-direction:column;gap:8px;padding:11px 12px;border-bottom:1px solid var(--tb-line)}
-.dshtb-add{display:flex;gap:6px;align-items:flex-end}
+.dshtb-seg button.on{background:var(--tb-paper);color:var(--tb-blue-deep);font-weight:600;
+  box-shadow:var(--tb-lift)}
+.dshtb-seg em{font-style:normal;font:600 11px/1 ${MONO};font-variant-numeric:tabular-nums;
+  color:var(--tb-faint)}
+.dshtb-seg button.on em{color:var(--tb-blue)}
+.dshtb-compose{display:flex;flex-direction:column;gap:9px;padding:11px 13px 13px}
+.dshtb-add{display:flex;gap:8px;align-items:flex-end}
 .dshtb-add textarea{flex:1;min-width:0;min-height:66px;max-height:180px;resize:vertical;
-  padding:8px 10px;border-radius:9px;border:1px solid var(--tb-line);
-  background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);font:inherit;font-size:13px;line-height:1.5;
-  outline:none;transition:border-color .12s,box-shadow .12s}
-.dshtb-add textarea::placeholder{color:var(--tb-dim)}
-.dshtb-add textarea:focus{border-color:var(--tb-accent);box-shadow:0 0 0 3px rgba(128,128,128,.16)}
-.dshtb-modes{display:flex;gap:4px}
-.dshtb-modes button{flex:1;padding:6px 3px;border-radius:8px;border:1px solid var(--tb-line);
-  background:transparent;color:var(--tb-dim);font:inherit;font-size:12px;line-height:1.2;cursor:pointer;
-  white-space:nowrap;transition:border-color .12s,color .12s}
-.dshtb-modes button:hover{color:var(--tb-ink);border-color:var(--tb-line2)}
-.dshtb-modes button.on{border-color:var(--tb-accent);color:var(--tb-accent);font-weight:600}
-.dshtb-hint{font-size:11.5px;color:var(--tb-dim);line-height:1.4}
-.dshtb-dir input{flex:1;min-width:0;padding:6px 9px;border-radius:8px;border:1px dashed var(--tb-line);
-  background:transparent;color:var(--tb-dim);font:inherit;font-size:12px;outline:none;
-  transition:border-color .12s,color .12s}
-.dshtb-when{display:flex;align-items:center;gap:7px;font:600 11px/1 ${MONO};color:var(--tb-dim)}
-.dshtb-when .lbl{letter-spacing:.08em}
-.dshtb-dir{display:flex;align-items:center;gap:7px;font:600 11px/1 ${MONO};color:var(--tb-dim)}
-.dshtb-dir .lbl{letter-spacing:.08em;flex:0 0 auto}
-.dshtb-when input{flex:1;min-width:0;padding:5px 8px;border-radius:8px;border:1px dashed var(--tb-line);
-  background:transparent;color:var(--tb-dim);font:inherit;font-size:12px;outline:none;
-  transition:border-color .12s,color .12s;color-scheme:dark light}
-.dshtb-when input:focus{border-style:solid;border-color:var(--tb-accent);color:var(--tb-ink)}
+  padding:9px 11px;border-radius:11px;border:1px solid var(--tb-line);
+  background:var(--tb-mist);color:var(--tb-ink);font:inherit;font-size:13px;line-height:1.5;
+  outline:none;transition:border-color .14s,box-shadow .14s,background .14s}
+.dshtb-add textarea::placeholder{color:var(--tb-faint)}
+.dshtb-add textarea:focus{background:var(--tb-paper);border-color:var(--tb-blue);
+  box-shadow:0 0 0 3px var(--tb-ring)}
+/* The composer's ＋ is the panel's one filled button — the action the whole card
+   exists for. It shares a class with a row's hover icons because it shares a
+   shape, not a job, so the fill is scoped to the composer. */
+.dshtb-add .dshtb-ic{flex:0 0 auto;width:34px;height:34px;border-radius:10px;font-size:15px;
+  background:var(--tb-blue);color:#fff}
+.dshtb-add .dshtb-ic:hover:not(:disabled){background:var(--tb-blue-deep);color:#fff}
+.dshtb-add .dshtb-ic:disabled{background:var(--tb-mist);color:var(--tb-faint);opacity:1}
+/* The execution mode is a three-way choice, so it is drawn as one: the same
+   track-and-pill shape as the scope switcher, in a row of its own. */
+.dshtb-modes{display:flex;gap:2px;align-self:flex-start;padding:3px;border-radius:11px;
+  background:var(--tb-mist)}
+.dshtb-modes button{padding:6px 14px;border:0;border-radius:9px;background:transparent;color:var(--tb-dim);
+  font:inherit;font-size:12.5px;line-height:1.2;cursor:pointer;white-space:nowrap;
+  transition:background .14s,color .14s,box-shadow .14s}
+.dshtb-modes button:hover{color:var(--tb-ink)}
+.dshtb-modes button.on{background:var(--tb-paper);color:var(--tb-blue-deep);font-weight:600;
+  box-shadow:var(--tb-lift)}
+.dshtb-hint{font-size:11.5px;color:var(--tb-faint);line-height:1.45}
+.dshtb-dir,.dshtb-when{display:flex;align-items:center;gap:8px;font:600 11px/1 ${MONO};color:var(--tb-dim)}
+.dshtb-dir .lbl,.dshtb-when .lbl{letter-spacing:.06em;flex:0 0 auto}
+.dshtb-dir input,.dshtb-when input{flex:1;min-width:0;padding:7px 9px;border-radius:9px;
+  border:1px solid var(--tb-line);background:var(--tb-mist);color:var(--tb-ink);font:inherit;
+  font-size:12px;outline:none;transition:border-color .14s,box-shadow .14s,background .14s}
+.dshtb-dir input::placeholder{color:var(--tb-faint)}
+.dshtb-dir input:focus,.dshtb-when input:focus{background:var(--tb-paper);border-color:var(--tb-blue);
+  box-shadow:0 0 0 3px var(--tb-ring)}
 /* The attachment area holds a hint and the pending thumbnails — no picker
    control, so no label styling belongs here any more. */
 .dshtb-attach{display:flex;flex-direction:column;gap:6px}
 .dshtb-thumbs{display:flex;flex-wrap:wrap;gap:6px}
 .dshtb-thumb{position:relative;width:52px;height:52px;padding:0;border:1px solid var(--tb-line);
-  border-radius:8px;background:transparent;cursor:pointer;overflow:hidden}
+  border-radius:10px;background:var(--tb-mist);cursor:pointer;overflow:hidden}
 .dshtb-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.dshtb-thumb .x{position:absolute;top:0;right:0;padding:0 3px;background:rgba(0,0,0,.6);color:#fff;
-  font:700 10px/1.4 ${MONO};border-bottom-left-radius:6px}
-.dshtb-imgs{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.dshtb-thumb .x{position:absolute;top:0;right:0;padding:0 3px;background:rgba(18,34,64,.62);color:#fff;
+  font:700 10px/1.4 ${MONO};border-bottom-left-radius:7px}
+.dshtb-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .dshtb-imgwrap{position:relative;display:inline-flex}
-.dshtb-img{width:64px;height:64px;object-fit:cover;border-radius:7px;border:1px solid var(--tb-line);
+.dshtb-img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--tb-line);
   cursor:zoom-in;display:block}
-.dshtb-imgx{position:absolute;top:-5px;right:-5px;width:16px;height:16px;padding:0;border:0;border-radius:50%;
-  background:var(--dsw-alias-bg-overlay);color:var(--tb-dim);box-shadow:0 0 0 1px var(--tb-line);
+.dshtb-imgx{position:absolute;top:-5px;right:-5px;width:17px;height:17px;padding:0;border:0;border-radius:50%;
+  background:var(--tb-paper);color:var(--tb-dim);
+  box-shadow:0 0 0 1px var(--tb-line),0 1px 3px rgba(18,42,86,.2);
   font:700 9px/1 ${MONO};cursor:pointer;display:grid;place-items:center}
-.dshtb-imgx:hover{color:var(--tb-ink)}
+.dshtb-imgx:hover{color:var(--tb-red)}
 .dshtb-light{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:10px;background:rgba(0,0,0,.72);cursor:zoom-out;
+  align-items:center;justify-content:center;gap:10px;background:rgba(14,24,44,.72);cursor:zoom-out;
   animation:dshtb-in .14s ease-out}
-.dshtb-light img{max-width:88vw;max-height:82vh;border-radius:10px;box-shadow:0 20px 60px -18px rgba(0,0,0,.8);cursor:default}
+.dshtb-light img{max-width:88vw;max-height:82vh;border-radius:12px;box-shadow:0 20px 60px -18px rgba(8,18,38,.7);cursor:default}
 .dshtb-lightcap{font:600 11px/1.4 ${MONO};color:#fff;opacity:.85}
-.dshtb-dir input::placeholder{color:var(--tb-dim);opacity:.85}
-.dshtb-dir input:focus{border-style:solid;border-color:var(--tb-accent);color:var(--tb-ink)}
-.dshtb-list,.dshtb-donelist{overflow:auto;padding:2px 0 6px;scrollbar-width:thin}
+.dshtb-list,.dshtb-donelist{overflow:auto;padding:2px 0 8px;scrollbar-width:thin}
 .dshtb-list::-webkit-scrollbar,.dshtb-donelist::-webkit-scrollbar{width:9px}
-.dshtb-list::-webkit-scrollbar-thumb,.dshtb-donelist::-webkit-scrollbar-thumb{background:var(--tb-line2);border-radius:5px;
+.dshtb-list::-webkit-scrollbar-thumb,.dshtb-donelist::-webkit-scrollbar-thumb{background:var(--tb-edge);border-radius:5px;
   border:3px solid transparent;background-clip:content-box}
 /* The one line that explains the mode chip, inside the list it applies to. Small
    and dim on purpose: it is read once, and it must never read as a control. */
-.dshtb-listhint{padding:7px 12px 3px;font-size:11px;line-height:1.45;color:var(--tb-dim);opacity:.9}
-.dshtb-group{display:flex;align-items:center;gap:7px;padding:10px 12px 4px;
-  font:600 10.5px/1 ${MONO};letter-spacing:.09em;text-transform:uppercase;color:var(--tb-dim)}
+.dshtb-listhint{padding:8px 14px 4px;font-size:11px;line-height:1.45;color:var(--tb-faint)}
+/* A box header names the session that runs the rows under it, so it stays a
+   real label — it just stops shouting. */
+.dshtb-group{display:flex;align-items:center;gap:7px;padding:10px 14px 4px;
+  font:600 11px/1 ${MONO};color:var(--tb-faint)}
 .dshtb-group::after{content:'';flex:1;height:1px;background:var(--tb-line)}
-.dshtb-item{display:flex;gap:7px;padding:7px 12px;align-items:flex-start;position:relative;
+/* A row nested under a container is indented, and a hairline keeps the eye on
+   the parent column. Four levels is all the styling carries; the tree itself
+   allows deeper, and beyond this the indent simply stops growing. */
+.dshtb-item[data-dshtb-nest="1"]{margin-left:16px;border-left:2px solid var(--tb-line);border-top-left-radius:0;border-bottom-left-radius:0}
+.dshtb-item[data-dshtb-nest="2"]{margin-left:32px;border-left:2px solid var(--tb-line);border-top-left-radius:0;border-bottom-left-radius:0}
+.dshtb-item[data-dshtb-nest="3"]{margin-left:48px;border-left:2px solid var(--tb-line);border-top-left-radius:0;border-bottom-left-radius:0}
+.dshtb-item[data-dshtb-nest="4"]{margin-left:64px;border-left:2px solid var(--tb-line);border-top-left-radius:0;border-bottom-left-radius:0}
+.dshtb-boxempty{padding:8px 14px 10px;font-size:12px;color:var(--tb-faint)}
+/* The gap between rows is the SIBLING drop zone. It is invisible until a drag
+   starts, so the list keeps its old density and the extra target costs nothing
+   when nobody is moving anything. */
+.dshtb-gap{height:0;margin:0 14px;transition:height .1s ease}
+.dshtb-gap.live{height:8px}
+.dshtb-group.droptarget{background:var(--tb-blue-wash);border-radius:8px}
+/* A row is the unit of work: it only gets a surface when the pointer is on it,
+   and the bar on its left is the same blue every other rule in this sheet uses. */
+.dshtb-item{display:flex;gap:9px;padding:9px 14px;align-items:flex-start;position:relative;
   border-top:2px solid transparent;animation:dshtb-row .2s ease-out both;transition:background .12s}
 @keyframes dshtb-row{from{opacity:0;transform:translateX(-5px)}to{opacity:1;transform:none}}
 .dshtb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;
   transition:background .12s}
-.dshtb-item:hover{background:var(--dsw-alias-bg-layer-2)}
-.dshtb-item:hover::before{background:var(--tb-line2)}
-.dshtb-item.done{opacity:.55}
+.dshtb-item:hover{background:var(--tb-haze)}
+.dshtb-item:hover::before{background:var(--tb-blue)}
+.dshtb-item.done{opacity:.6}
 .dshtb-item.done .dshtb-t{text-decoration:line-through}
 .dshtb-item.dragging{opacity:.3}
-.dshtb-item.over{border-top-color:var(--tb-accent)}
-.dshtb-grip{flex:0 0 auto;width:9px;padding-top:3px;cursor:grab;user-select:none;opacity:0;
-  color:var(--tb-dim);font:700 10px/1 ${MONO};letter-spacing:-1px;transition:opacity .12s}
+.dshtb-item.over{border-top-color:var(--tb-blue)}
+.dshtb-grip{flex:0 0 auto;width:9px;padding-top:4px;cursor:grab;user-select:none;opacity:0;
+  color:var(--tb-faint);font:700 10px/1 ${MONO};letter-spacing:-1px;transition:opacity .12s}
 .dshtb-item:hover .dshtb-grip,.dshtb-item.dragging .dshtb-grip{opacity:.8}
 .dshtb-grip:active{cursor:grabbing}
-.dshtb-checks{display:flex;flex-direction:column;gap:5px;padding-top:2px;flex:0 0 auto}
-.dshtb-cb{width:18px;height:18px;padding:0;border:1.5px solid var(--tb-line2);background:transparent;
-  cursor:pointer;display:grid;place-items:center;font:700 11px/1 ${MONO};color:transparent;
+.dshtb-checks{display:flex;flex-direction:column;gap:6px;padding-top:1px;flex:0 0 auto}
+.dshtb-cb{width:17px;height:17px;padding:0;border:1.5px solid var(--tb-edge);background:var(--tb-paper);
+  cursor:pointer;display:grid;place-items:center;font:700 10px/1 ${MONO};color:transparent;
   transition:background .14s,border-color .14s,color .14s}
-.dshtb-cb.ai{border-radius:4px}
+/* Square is the agent's own tick, round is yours — that is meaning, not
+   decoration, so it survives every skin. */
+.dshtb-cb.ai{border-radius:5px}
 .dshtb-cb.me{border-radius:50%}
-.dshtb-cb:hover{border-color:var(--tb-accent)}
-.dshtb-cb.ai.on{background:var(--tb-accent);border-color:var(--tb-accent);color:#fff}
-.dshtb-cb.me.on{background:var(--tb-ok);border-color:var(--tb-ok);color:#fff}
+.dshtb-cb:hover{border-color:var(--tb-blue)}
+.dshtb-cb.ai.on{background:var(--tb-blue);border-color:var(--tb-blue);color:#fff}
+.dshtb-cb.me.on{background:var(--tb-green);border-color:var(--tb-green);color:#fff}
 .dshtb-cb.on{animation:dshtb-pop .18s ease-out}
 @keyframes dshtb-pop{0%{transform:scale(.55)}60%{transform:scale(1.18)}100%{transform:scale(1)}}
 .dshtb-body{flex:1;min-width:0}
 .dshtb-t{font-size:13px;word-break:break-word;white-space:pre-wrap;line-height:1.45}
 .dshtb-facts{margin-top:3px;font:400 11px/1.4 ${MONO};font-variant-numeric:tabular-nums;
-  color:var(--tb-dim);word-break:break-all}
-.dshtb-t input{width:100%;padding:2px 5px;border-radius:5px;border:1px solid var(--tb-accent);
-  background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);font:inherit;outline:none}
+  color:var(--tb-faint);word-break:break-all}
+.dshtb-t input{width:100%;padding:2px 6px;border-radius:6px;border:1px solid var(--tb-blue);
+  background:var(--tb-mist);color:var(--tb-ink);font:inherit;outline:none;
+  box-shadow:0 0 0 3px var(--tb-ring)}
 .dshtb-edit{display:block;width:100%;min-height:76px;max-height:220px;resize:vertical;
-  padding:6px 8px;border-radius:7px;border:1px solid var(--tb-accent);
-  background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);font:inherit;font-size:13px;
-  line-height:1.45;outline:none;box-shadow:0 0 0 3px rgba(128,128,128,.16)}
-.dshtb-edit::placeholder{color:var(--tb-dim)}
+  padding:7px 9px;border-radius:10px;border:1px solid var(--tb-blue);background:var(--tb-paper);
+  color:var(--tb-ink);font:inherit;font-size:13px;line-height:1.45;outline:none;
+  box-shadow:0 0 0 3px var(--tb-ring)}
+.dshtb-edit::placeholder{color:var(--tb-faint)}
 /* The note: plain text, never a control, so it must not look like one — no
    border, no background, no pointer cursor. It sits directly under the title and
    is clamped to two lines (one in the dense skin); the clamp is visual only, the
@@ -287,60 +348,61 @@ const CSS = `
 /* The note editor is its own control (never folded into the title editor): a
    note is multi-line text, and the title editor's single-line commit rules would
    cut it in half. */
-.dshtb-noteedit{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.dshtb-noteedit{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
 .dshtb-notearea{flex:1 0 100%;width:100%;min-height:54px;max-height:220px;resize:vertical;
-  padding:6px 8px;border-radius:7px;border:1px solid var(--tb-accent);
-  background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);font:inherit;font-size:12.5px;
-  line-height:1.45;outline:none;box-shadow:0 0 0 3px rgba(128,128,128,.16)}
-.dshtb-notearea::placeholder{color:var(--tb-dim)}
-.dshtb-notesave,.dshtb-notecancel{padding:2px 9px;border:1px solid var(--tb-line);border-radius:6px;
-  background:transparent;color:var(--tb-dim);font:inherit;font-size:11.5px;cursor:pointer;
-  transition:border-color .12s,color .12s}
-.dshtb-notesave{color:var(--tb-accent);border-color:var(--tb-accent)}
-.dshtb-notesave:hover{border-color:var(--tb-accent);color:var(--tb-ink)}
-.dshtb-notecancel:hover{border-color:var(--tb-line2);color:var(--tb-ink)}
-.dshtb-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;
+  padding:7px 9px;border-radius:10px;border:1px solid var(--tb-blue);background:var(--tb-paper);
+  color:var(--tb-ink);font:inherit;font-size:12.5px;line-height:1.45;outline:none;
+  box-shadow:0 0 0 3px var(--tb-ring)}
+.dshtb-notearea::placeholder{color:var(--tb-faint)}
+.dshtb-notesave,.dshtb-notecancel{padding:4px 11px;border:1px solid var(--tb-line);border-radius:8px;
+  background:var(--tb-paper);color:var(--tb-dim);font:inherit;font-size:11.5px;cursor:pointer;
+  transition:border-color .12s,color .12s,background .12s}
+.dshtb-notesave{background:var(--tb-blue);border-color:var(--tb-blue);color:#fff}
+.dshtb-notesave:hover{background:var(--tb-blue-deep);border-color:var(--tb-blue-deep);color:#fff}
+.dshtb-notecancel:hover{border-color:var(--tb-edge);color:var(--tb-ink)}
+/* State stops being a frame and becomes a tint: the word reads first and the
+   colour says what it is, so only 「进行中」, 「到点」 and a stuck row get weight. */
+.dshtb-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;
   font:400 12px/1.5 ${MONO};color:var(--tb-dim)}
-.dshtb-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;
-  background:var(--dsw-alias-bg-layer-1);border:1px solid var(--tb-line);white-space:nowrap;
-  font:inherit;font-size:12px;color:var(--tb-dim)}
-button.dshtb-chip{cursor:pointer;font:inherit;color:inherit;transition:border-color .12s,color .12s}
-button.dshtb-chip:hover{border-color:var(--tb-line2);color:var(--tb-ink)}
-.dshtb-chip.sent{color:var(--tb-ok);border-color:var(--tb-ok)}
-.dshtb-chip.idle{opacity:.72}
-.dshtb-chip.ok{color:var(--tb-ok);border-color:var(--tb-line)}
-.dshtb-chip.due{color:var(--tb-warn);border-color:var(--tb-warn);font-weight:600}
-.dshtb-chip.run{color:var(--tb-accent);border-color:var(--tb-accent);font-weight:600}
-.dshtb-chip.bad{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);
-  font-weight:600;cursor:help}
-.dshtb-chip.quiet{opacity:.62}
+.dshtb-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:7px;
+  background:var(--tb-mist);border:1px solid transparent;white-space:nowrap;
+  font:inherit;font-size:11.5px;color:var(--tb-dim)}
+button.dshtb-chip{cursor:pointer;font:inherit;color:inherit;transition:background .12s,color .12s}
+button.dshtb-chip:hover{background:var(--tb-haze);color:var(--tb-ink)}
+.dshtb-chip.sent{background:var(--tb-green-wash);color:var(--tb-green)}
+.dshtb-chip.idle{opacity:.75}
+.dshtb-chip.ok{background:var(--tb-green-wash);color:var(--tb-green)}
+.dshtb-chip.due{background:var(--tb-amber-wash);color:var(--tb-amber);font-weight:600}
+.dshtb-chip.run{background:var(--tb-blue-wash);color:var(--tb-blue-deep);font-weight:600}
+.dshtb-chip.bad{background:var(--tb-red-wash);color:var(--tb-red);font-weight:600;cursor:help}
+.dshtb-chip.quiet{opacity:.75}
 .dshtb-chip.quiet:hover{opacity:1}
 /* The ✕ sits beside the time chip rather than inside it: a button may not nest
    another control, and keep it narrow so the pair reads as one chip. */
 .dshtb-chip.x{padding:2px 5px;cursor:pointer}
-.dshtb-whenchip{display:inline-flex;align-items:center;gap:2px;padding:1px 3px;border-radius:6px;
-  background:var(--dsw-alias-bg-layer-1);border:1px solid var(--tb-accent)}
+.dshtb-whenchip{display:inline-flex;align-items:center;gap:2px;padding:1px 4px;border-radius:7px;
+  background:var(--tb-blue-wash);border:1px solid transparent}
 .dshtb-whenedit{padding:1px 4px;border:0;background:transparent;color:var(--tb-ink);
-  font:inherit;font-size:11px;outline:none;color-scheme:dark light}
+  font:inherit;font-size:11px;outline:none}
 .dshtb-whenchip .dshtb-ic{width:18px;height:18px;font-size:10px}
 .dshtb-acts{display:flex;gap:1px;flex:0 0 auto;opacity:0;transition:opacity .12s}
 .dshtb-item:hover .dshtb-acts{opacity:1}
-.dshtb-ic{width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;
-  color:var(--tb-dim);cursor:pointer;display:grid;place-items:center;font-size:11px;
+.dshtb-ic{width:22px;height:22px;padding:0;border:0;border-radius:7px;background:transparent;
+  color:var(--tb-faint);cursor:pointer;display:grid;place-items:center;font-size:11px;
   transition:background .12s,color .12s}
-.dshtb-ic:hover{background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink)}
+.dshtb-ic:hover{background:var(--tb-paper);color:var(--tb-ink)}
 .dshtb-ic:disabled{opacity:.4;cursor:default}
-.dshtb-empty{padding:24px 16px;text-align:center;color:var(--tb-dim)}
-.dshtb-empty b{display:block;font:700 24px/1 ${MONO};opacity:.3;margin-bottom:9px}
+.dshtb-empty{padding:26px 16px;text-align:center;color:var(--tb-faint)}
+.dshtb-empty b{display:block;font:700 24px/1 ${MONO};opacity:.4;margin-bottom:9px}
 .dshtb-empty span{font-size:11px;opacity:.9}
 /* One short line, not an empty box: an empty section should cost nothing. */
-.dshtb-doneempty{padding:6px 12px 8px;font-size:11.5px;color:var(--tb-dim);opacity:.85}
+.dshtb-doneempty{padding:6px 14px 8px;font-size:11.5px;color:var(--tb-faint)}
 .dshtb-foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 12px;
   border-top:1px solid var(--tb-line);margin-top:auto;
   font:600 11px/1 ${MONO};font-variant-numeric:tabular-nums;color:var(--tb-dim)}
-.dshtb-link{padding:2px 6px;border:1px solid var(--tb-line);border-radius:6px;background:transparent;
-  color:var(--tb-dim);font:inherit;cursor:pointer;transition:background .12s,color .12s,border-color .12s}
-.dshtb-link:hover{background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);border-color:var(--tb-line2)}
+.dshtb-link{padding:3px 8px;border:1px solid transparent;border-radius:7px;background:transparent;
+  color:var(--tb-dim);font:inherit;cursor:pointer;transition:background .12s,color .12s}
+.dshtb-link:hover{background:var(--tb-haze);color:var(--tb-blue-deep)}
 .dshtb-link.off{opacity:.5;cursor:not-allowed}
 /* Shipped Cordis popup: parked under this panel, right-aligned to it.
    !important beats the inline left/bottom the panel computes from its anchor. */
@@ -348,72 +410,73 @@ button.dshtb-chip:hover{border-color:var(--tb-line2);color:var(--tb-ink)}
   right:var(--dsh-todo-cordis-right,16px) !important;
   top:var(--dsh-todo-cordis-top,120px) !important;
   max-height:var(--dsh-todo-cordis-maxh,60vh) !important}
-.dshtb-err{padding:6px 12px;color:var(--dsw-alias-state-error-primary);font:400 10.5px/1.4 ${MONO};
-  word-break:break-all;border-top:1px solid var(--tb-line)}
+.dshtb-err{padding:7px 13px;background:var(--tb-red-wash);color:var(--tb-red);
+  font:400 10.5px/1.45 ${MONO};word-break:break-all;border-top:1px solid var(--tb-line)}
 /* Parked as one line: label + counts + the next task, expandable by a click.
    align-self keeps it hugging its content instead of stretching to the card width. */
-.dshtb-pill{align-self:flex-start;display:flex;align-items:center;gap:8px;min-width:0;
-  max-width:calc(100vw - 32px);padding:6px 10px;border-radius:10px;
-  background:var(--tb-bg);border:1px solid var(--tb-line);cursor:grab;user-select:none;
-  touch-action:none;
-  box-shadow:0 10px 30px -12px rgba(0,0,0,.5);transition:border-color .14s}
+.dshtb-pill{align-self:flex-start;display:flex;align-items:center;gap:9px;min-width:0;
+  max-width:calc(100vw - 32px);padding:7px 12px;border-radius:12px;
+  background:var(--tb-paper);border:1px solid var(--tb-line);cursor:grab;user-select:none;
+  touch-action:none;box-shadow:var(--tb-shadow);transition:border-color .14s}
 .dshtb-pill:active{cursor:grabbing}
-.dshtb-pill:hover{border-color:var(--tb-line2)}
-.dshtb-pill .lbl{font:600 10px/1 ${MONO};letter-spacing:.12em;text-transform:uppercase;color:var(--tb-ink)}
+.dshtb-pill:hover{border-color:var(--tb-edge)}
+.dshtb-pill .lbl{font:700 10px/1 ${MONO};letter-spacing:.14em;color:var(--tb-blue)}
 .dshtb-pill .next{flex:1;min-width:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;font-size:12px;color:var(--tb-dim)}
-.dshtb-pill .next.q{font-style:italic;opacity:.7}
-.dshtb-badge{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--tb-accent);
-  color:#fff;font:700 10px/1 ${MONO};font-variant-numeric:tabular-nums;display:inline-grid;place-items:center}
-.dshtb-badge.warn{background:var(--tb-warn)}
+.dshtb-pill .next.q{font-style:italic;opacity:.8}
+.dshtb-badge{min-width:19px;height:19px;padding:0 6px;border-radius:10px;background:var(--tb-blue);
+  color:#fff;font:700 10px/1 ${MONO};font-variant-numeric:tabular-nums;
+  display:inline-grid;place-items:center}
+.dshtb-badge.warn{background:var(--tb-amber-wash);color:var(--tb-amber)}
 /* The log button and its "something went wrong" dot. The dot rides the button
    instead of a separate node so it cannot drift away from the control it
    annotates, and it is absolutely positioned so lighting it never reflows the
    title bar. */
 .dshtb-log{position:relative}
-.dshtb-log.on{background:var(--dsw-alias-bg-layer-1);color:var(--tb-ink);border-color:var(--tb-line2)}
+.dshtb-log.on{background:var(--tb-blue-wash);color:var(--tb-blue-deep)}
 .dshtb-dot{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;
-  background:var(--tb-warn);box-shadow:0 0 0 1.5px var(--tb-bg)}
+  background:var(--tb-red);box-shadow:0 0 0 1.5px var(--tb-paper)}
 /* Developer view: monospace, dense, unabashedly plain. This is not a surface to
    make pretty — it is a surface to read a stack trace on. */
 .dshtb-logview{display:flex;flex-direction:column;min-height:0;flex:1}
-.dshtb-logbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:8px 12px;
+.dshtb-logbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:8px 13px;
   border-bottom:1px solid var(--tb-line)}
-.dshtb-logbar button{padding:3px 8px;border-radius:7px;border:1px solid var(--tb-line);
-  background:transparent;color:var(--tb-dim);font:600 10.5px/1.4 ${MONO};cursor:pointer;
-  transition:background .12s,color .12s,border-color .12s}
-.dshtb-logbar button:hover{color:var(--tb-ink);border-color:var(--tb-line2)}
-.dshtb-logbar button.on{background:var(--tb-accent);border-color:var(--tb-accent);color:#fff}
+.dshtb-logbar button{padding:3px 9px;border-radius:7px;border:1px solid transparent;
+  background:var(--tb-mist);color:var(--tb-dim);font:600 10.5px/1.4 ${MONO};cursor:pointer;
+  transition:background .12s,color .12s}
+.dshtb-logbar button:hover{color:var(--tb-ink)}
+.dshtb-logbar button.on{background:var(--tb-blue-wash);color:var(--tb-blue-deep)}
 /* The source toggle is its own class rather than a reuse of the title-bar log
    button: same reason the three title-bar controls are separate — a class is
    how something finds exactly one control. */
 .dshtb-logsrc{min-width:56px}
-.dshtb-logfilter{flex:1;min-width:90px;padding:3px 8px;border-radius:7px;border:1px solid var(--tb-line);
-  background:transparent;color:var(--tb-ink);font:400 11px/1.4 ${MONO};outline:none}
-.dshtb-logfilter:focus{border-color:var(--tb-accent)}
-.dshtb-logmeta{padding:5px 12px;border-bottom:1px solid var(--tb-line);
-  font:400 10px/1.5 ${MONO};color:var(--tb-dim);word-break:break-all}
-.dshtb-logmeta b{color:var(--tb-warn);font-weight:700}
+.dshtb-logfilter{flex:1;min-width:90px;padding:4px 9px;border-radius:8px;border:1px solid var(--tb-line);
+  background:var(--tb-mist);color:var(--tb-ink);font:400 11px/1.4 ${MONO};outline:none;
+  transition:border-color .14s,box-shadow .14s}
+.dshtb-logfilter:focus{border-color:var(--tb-blue);box-shadow:0 0 0 3px var(--tb-ring)}
+.dshtb-logmeta{padding:6px 13px;border-bottom:1px solid var(--tb-line);
+  font:400 10px/1.5 ${MONO};color:var(--tb-faint);word-break:break-all}
+.dshtb-logmeta b{color:var(--tb-amber);font-weight:700}
 .dshtb-loglist{flex:1;min-height:0;overflow:auto;padding:2px 0}
-.dshtb-logrow{display:flex;gap:8px;padding:4px 12px;border-bottom:1px solid var(--tb-line);
-  font:400 10.5px/1.5 ${MONO};align-items:flex-start}
-.dshtb-logrow:hover{background:var(--dsw-alias-bg-layer-1)}
+.dshtb-logrow{display:flex;gap:9px;padding:5px 13px;border-bottom:1px solid var(--tb-line);
+  font:400 10.5px/1.55 ${MONO};align-items:flex-start}
+.dshtb-logrow:hover{background:var(--tb-haze)}
 .dshtb-logrow .at{flex:0 0 auto;opacity:.6;font-variant-numeric:tabular-nums}
-.dshtb-logrow .lv{flex:0 0 auto;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
-.dshtb-logrow.error .lv{color:var(--dsw-alias-state-error-primary)}
-.dshtb-logrow.warn .lv{color:var(--tb-warn)}
-.dshtb-logrow.info .lv{color:var(--tb-dim)}
+.dshtb-logrow .lv{flex:0 0 auto;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.dshtb-logrow.error .lv{color:var(--tb-red)}
+.dshtb-logrow.warn .lv{color:var(--tb-amber)}
+.dshtb-logrow.info .lv{color:var(--tb-faint)}
 .dshtb-logrow.debug .lv{opacity:.65}
 .dshtb-logrow .body{flex:1;min-width:0;white-space:pre-wrap;word-break:break-word}
 .dshtb-logrow .src{opacity:.6}
-.dshtb-logempty{padding:20px 12px;text-align:center;color:var(--tb-dim);font:400 11.5px/1.6 ${MONO}}
+.dshtb-logempty{padding:22px 14px;text-align:center;color:var(--tb-faint);font:400 11.5px/1.6 ${MONO}}
 `
 
 /**
- * The two optional skins, each scoped by `[data-dshtb-skin]` on the panel root.
+ * The optional skins, each scoped by `[data-dshtb-skin]` on the panel root.
  *
  * They are additive on purpose: the base stylesheet above describes the default
- * `ticket` look, so disabling a declaration here restores the shipped panel
+ * 「蓝白」 look, so disabling a declaration here restores the shipped panel
  * rather than an unstyled one. Everything is scoped under the root attribute,
  * so no skin can reach a node outside this panel — the GUI around it is never
  * affected by which skin is selected.
@@ -424,130 +487,174 @@ button.dshtb-chip:hover{border-color:var(--tb-line2);color:var(--tb-ink)}
  */
 const CSS_PLAIN = `
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-card{
-  border-color:transparent;box-shadow:0 22px 60px -20px rgba(0,0,0,.42);border-radius:16px}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-head{border-bottom:0;padding:12px 14px 8px}
+  border-color:transparent;border-radius:18px;box-shadow:var(--tb-shadow)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-head{border-bottom:0;padding:13px 15px 8px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-title{font-weight:600;letter-spacing:0}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats i::before{display:none}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats{gap:12px}
+/* With no frame anywhere else on the card, a filled count badge would be the
+   loudest thing in the header — so the counts go back to being readouts, and
+   待验 keeps the one colour it has. */
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats{gap:11px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats i,
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats i+i{background:transparent;padding:0;color:var(--tb-dim)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-stats i+i{color:var(--tb-amber)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-seg{
-  background:transparent;border:0;border-radius:0;padding:0 14px;margin:6px 0 2px;gap:16px}
+  background:transparent;border:0;border-radius:0;padding:0 15px;margin:8px 0 0;gap:18px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-seg button{
-  flex:0 0 auto;padding:3px 0;border-radius:0;border-bottom:1.5px solid transparent;
+  flex:0 0 auto;padding:4px 0;border-radius:0;border-bottom:1.5px solid transparent;
   font-size:12.5px;color:var(--tb-dim)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-seg button:hover{color:var(--tb-ink)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-seg button.on{
-  background:transparent;box-shadow:none;color:var(--tb-ink);border-bottom-color:var(--tb-ink);
+  background:transparent;box-shadow:none;color:var(--tb-blue-deep);border-bottom-color:var(--tb-blue);
   font-weight:600}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-seg em{font-size:10.5px;opacity:.5}
 /* The section label stays legible and keeps saying what it hides — it just
    stops shouting. It is NOT hidden: the label is the only thing that says what
    a folded section is, which is the whole reason it doubles as the control. */
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-sect{
-  letter-spacing:0;text-transform:none;padding:10px 14px 4px;gap:5px;
-  font:600 11.5px/1 ${MONO}}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-sect .car{font-size:10px;color:var(--tb-dim)}
+  letter-spacing:0;padding:11px 15px 5px;gap:6px;font:600 12px/1 inherit}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-sect .car{font-size:10px;color:var(--tb-faint)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-sect::after{display:none}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-compose{border-bottom:0;padding:8px 14px 12px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-compose{padding:9px 15px 14px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-add textarea{
-  border-color:transparent;background:var(--dsw-alias-bg-layer-2);border-radius:12px;padding:10px 12px}
+  border-color:transparent;background:var(--tb-mist);border-radius:12px;padding:10px 12px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-add textarea:focus{
-  border-color:var(--tb-line2);box-shadow:none}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes{
-  gap:0;padding:0;background:transparent;border:0;border-radius:0;align-self:flex-start}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes button{
-  flex:0 0 auto;border:0;border-bottom:1.5px solid transparent;border-radius:0;padding:4px 10px;
-  font-size:12.5px}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes button:hover{border-bottom-color:var(--tb-line2)}
+  background:var(--tb-paper);border-color:var(--tb-blue);box-shadow:0 0 0 3px var(--tb-ring)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes{gap:0;padding:0;background:transparent}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes button{padding:5px 13px;border-radius:0}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-modes button:hover{background:transparent;color:var(--tb-ink)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-modes button.on{
-  border-bottom-color:var(--tb-accent);color:var(--tb-accent)}
+  background:transparent;box-shadow:inset 0 -1.5px 0 var(--tb-blue);color:var(--tb-blue-deep)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-dir input,
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-when input{border-style:solid;border-color:transparent;
-  background:var(--dsw-alias-bg-layer-2)}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-dir input:focus,
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-when input:focus{border-color:var(--tb-line2)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-when input{border-color:transparent;background:var(--tb-mist)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-list,
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-donelist{padding:0 0 8px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-donelist{padding:0 0 10px}
 /* The group heading is the directory a row belongs to, so it stays readable —
-   it just loses its rule and its uppercase tracking. Keeping the text at a
-   small size rather than at zero is deliberate: a zero font size here would
-   erase the only on-screen statement of which directory you are looking at. */
+   it just loses its rule and its tracking. Keeping the text at a small size
+   rather than at zero is deliberate: a zero font size here would erase the only
+   on-screen statement of which directory you are looking at. */
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-group{
-  letter-spacing:0;text-transform:none;padding:12px 14px 2px;font:600 10.5px/1 ${MONO};
-  opacity:.85}
+  padding:13px 15px 2px;font:600 11px/1 ${MONO};color:var(--tb-faint)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-group::after{display:none}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-item{padding:8px 14px;gap:9px}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-item:hover{background:var(--dsw-alias-bg-layer-1)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-item{padding:9px 15px;gap:10px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-item:hover{background:var(--tb-mist)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-item::before{display:none}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-grip{opacity:.28}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-facts{font-size:10.5px;opacity:.8}
-/* A state stops being a bordered chip and becomes its own colour: a dot for the
-   quiet states, a tinted pill only where the row is actually asking for you. */
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-facts{font-size:10.5px;opacity:.85}
+/* A state stops being a tinted label and becomes its own colour: a dot for the
+   quiet states, a filled pill only where the row is actually asking for you. */
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip{
   border:0;background:transparent;padding:0;gap:5px;font-size:11.5px;border-radius:0}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip::before{
   content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.45;flex:0 0 auto}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.idle{opacity:.55}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.idle{opacity:.6}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.sent::before,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.ok::before{opacity:.9}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.run,
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.bad{
-  padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.bad{padding:2px 9px;border-radius:999px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.run{background:var(--tb-blue-wash);color:var(--tb-blue-deep)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.bad{background:var(--tb-red-wash);color:var(--tb-red)}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.run::before,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.bad::before{opacity:1}
 /* The schedule keeps a real frame: it is the one chip that must still look
    like something you can press. */
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.quiet,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.due{
-  border:1px solid var(--tb-line);border-radius:999px;padding:2px 8px;background:transparent}
+  border:1px solid var(--tb-edge);border-radius:999px;padding:2px 9px;background:transparent}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.quiet::before,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.due::before,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-chip.x::before{display:none}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-whenchip{border-color:var(--tb-line);border-radius:999px}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-whenchip{background:var(--tb-blue-wash);border-radius:999px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-img,
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-thumb{border-color:transparent}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-foot{border-top:0}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-foot{border-top:0;padding-top:2px}
 .dshtb-root[data-dshtb-skin="plain"] .dshtb-link{border-color:transparent}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-pill{
-  border-color:transparent;border-radius:12px;box-shadow:0 14px 34px -16px rgba(0,0,0,.5)}
-.dshtb-root[data-dshtb-skin="plain"] .dshtb-badge{background:var(--tb-ink);color:var(--tb-bg)}
+.dshtb-root[data-dshtb-skin="plain"] .dshtb-pill{border-color:transparent;border-radius:14px}
 `
 
-/** `dense` keeps the ticket structure and removes its air. */
+/** `dense` keeps the structure of the default look and removes its air. */
 const CSS_DENSE = `
 .dshtb-root[data-dshtb-skin="dense"]{font-size:12px;line-height:1.42}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-head{padding:7px 10px;gap:6px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-card{border-radius:10px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-stats{gap:7px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-fold{width:22px;height:22px;font-size:12px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-seg{margin:6px 9px 0;padding:1px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-seg button{padding:3px 5px;font-size:11.5px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-sect{padding:6px 10px 3px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-compose{padding:8px 10px;gap:6px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-add textarea{min-height:48px;padding:6px 8px;font-size:12.5px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-modes button{padding:4px 3px;font-size:11.5px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-item{padding:5px 10px;gap:6px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-group{padding:7px 10px 3px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-head{padding:8px 11px;gap:6px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-card{border-radius:12px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-stats{gap:5px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-stats i{padding:2px 7px;font-size:10.5px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-fold,
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-skin,
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-log{width:22px;height:22px;font-size:12px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-seg{margin:7px 10px 0;padding:2px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-seg button{padding:4px 4px;font-size:12px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-sect{padding:7px 11px 4px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-compose{padding:9px 11px;gap:7px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-add textarea{min-height:48px;padding:7px 9px;font-size:12.5px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-add .dshtb-ic{width:28px;height:28px;border-radius:9px;font-size:13px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-modes{padding:2px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-modes button{padding:5px 11px;font-size:12px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-item{padding:6px 11px;gap:7px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-group{padding:8px 11px 3px;font-size:10.5px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-t{font-size:12.5px;line-height:1.4}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-facts{font-size:10.5px;margin-top:2px}
 /* One line, not two: the dense skin exists to fit more rows on one screen. */
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-note{-webkit-line-clamp:1;font-size:11px;margin-top:2px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-notearea{font-size:12px;min-height:46px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-doneempty{padding:4px 10px 6px;font-size:11px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-meta{gap:4px;margin-top:3px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-chip{padding:1px 6px;font-size:11.5px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-cb{width:15px;height:15px;font-size:10px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-checks{gap:4px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-doneempty{padding:4px 11px 6px;font-size:11px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-meta{gap:4px;margin-top:4px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-chip{padding:1px 7px;font-size:11px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-cb{width:15px;height:15px;font-size:9px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-checks{gap:5px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-img{width:46px;height:46px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-thumb{width:40px;height:40px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-ic{width:19px;height:19px;font-size:10px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-foot{padding:6px 10px;gap:5px 7px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-pill{padding:4px 8px;gap:6px}
-.dshtb-root[data-dshtb-skin="dense"] .dshtb-badge{min-width:16px;height:16px;font-size:9.5px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-foot{padding:6px 11px;gap:5px 7px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-pill{padding:5px 10px;gap:7px}
+.dshtb-root[data-dshtb-skin="dense"] .dshtb-badge{min-width:17px;height:17px;font-size:9.5px}
 .dshtb-root[data-dshtb-skin="dense"] .dshtb-empty{padding:16px 12px}
 `
 
-/** Skin id -> its block. `ticket` is absent: the base sheet is its definition. */
-const SKIN_CSS = { plain: CSS_PLAIN, dense: CSS_DENSE }
+/**
+ * `theme` is the look this panel had before it had one of its own: the same
+ * layout, type and motion, with the palette re-bound to the GUI's own tokens.
+ * It is deliberately the only block in this file that reads `--dsw-alias-*`.
+ *
+ * It exists because the panel is an overlay on somebody else's surface. On a
+ * dark GUI a white card is a beacon — the right default on a light one, the
+ * wrong one on the other. So the default stays blue-and-white, and one click
+ * hands the colours back to the host.
+ *
+ * The tints are `color-mix(…, transparent)` rather than opaque colours: a wash
+ * has to stay a wash over a card whose surface the user has chosen, and here
+ * that surface may be dark.
+ */
+const CSS_THEME = `
+.dshtb-root[data-dshtb-skin="theme"]{
+  --tb-paper:var(--dsw-alias-bg-overlay);
+  --tb-mist:var(--dsw-alias-bg-layer-1);
+  --tb-haze:var(--dsw-alias-bg-layer-2);
+  --tb-line:var(--dsw-alias-border-l1);
+  --tb-edge:var(--dsw-alias-border-l2);
+  --tb-ink:var(--dsw-alias-label-primary);
+  --tb-dim:var(--dsw-alias-label-secondary);
+  --tb-faint:color-mix(in srgb,var(--dsw-alias-label-secondary) 72%,transparent);
+  --tb-blue:var(--dsw-alias-brand-primary);
+  --tb-blue-deep:var(--dsw-alias-brand-primary);
+  --tb-blue-wash:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);
+  --tb-green:var(--dsw-alias-state-success-primary);
+  --tb-green-wash:color-mix(in srgb,var(--dsw-alias-state-success-primary) 18%,transparent);
+  --tb-amber:var(--dsw-alias-state-warn-primary);
+  --tb-amber-wash:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 20%,transparent);
+  --tb-red:var(--dsw-alias-state-error-primary);
+  --tb-red-wash:color-mix(in srgb,var(--dsw-alias-state-error-primary) 18%,transparent);
+  --tb-ring:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent);
+  --tb-shadow:0 18px 44px -20px rgba(0,0,0,.5);
+  --tb-lift:0 1px 3px rgba(0,0,0,.24);
+  color-scheme:light dark}
+/* Two places were drawn against a white card and have to follow the surface: the
+   hover plate behind a row icon, and the white-on-brand note button, whose label
+   is only readable because the brand colour is dark enough in this palette. */
+.dshtb-root[data-dshtb-skin="theme"] .dshtb-ic:hover{background:var(--tb-mist)}
+.dshtb-root[data-dshtb-skin="theme"] .dshtb-cb{background:var(--tb-paper)}
+`
+
+/** Skin id -> its block. The default is absent: the base sheet IS its definition. */
+const SKIN_CSS = { plain: CSS_PLAIN, dense: CSS_DENSE, theme: CSS_THEME }
 
 const isSkin = (id) => SKINS.some((skin) => skin.id === id)
 
@@ -1110,6 +1217,14 @@ function TodoBoard(props) {
       ? currentSummary.title
       : ''
 
+  // Every retained session, for naming the execution boxes. The panel reads no
+  // activity timestamp off this store, so a box is named and ordered from what
+  // the host already ships — see `boxTree`.
+  const sessionRows = props.useSessions((s) => {
+    const byId = s === undefined || s === null ? undefined : s.byId
+    return byId === undefined || byId === null ? {} : byId
+  })
+
   const [open, setOpen] = React.useState(true)
   const [data, setData] = React.useState(null)
   const [err, setErr] = React.useState('')
@@ -1121,7 +1236,7 @@ function TodoBoard(props) {
   const [noteId, setNoteId] = React.useState('')
   const [noteDraft, setNoteDraft] = React.useState('')
   const [viewing, setViewing] = React.useState(null)
-  const [filter, setFilter] = React.useState('dir')
+  const [filter, setFilter] = React.useState('session')
   const [busy, setBusy] = React.useState(false)
   const [dragId, setDragId] = React.useState('')
   const [overId, setOverId] = React.useState('')
@@ -1530,7 +1645,34 @@ function TodoBoard(props) {
   const cwdKey = cwd === '' ? '' : cwd.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
 
   const byDir = todos.filter((t) => t.dir === cwdKey)
-  const bySession = todos.filter((t) => t.sourceSessionId === currentId)
+  // Ownership, not authorship: which session RUNS a row is no longer the session
+  // that planned it, once the row has been re-parented or its container has
+  // spawned. The host resolves that walk — containers, cycles and all — and ships
+  // the answer as `ownerSessionId`, so the panel never restates the rule.
+  // A container's children are owned by a session that does not exist YET, so
+  // `ownerSessionId` is empty for them and the plain test drops them. They still
+  // belong on this tab: the container that will carry them is right here, and a
+  // row you cannot see is a row you cannot drag out again. So the tab also takes
+  // anything nested under a row it owns, walking up the chain with the same
+  // bound the host uses.
+  const ownedByCurrent = (list, sessionId) => {
+    const owned = new Set()
+    for (const row of list) if (row.ownerSessionId === sessionId) owned.add(row.id)
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const row of list) {
+        const runIn = row.runIn
+        if (runIn === undefined || runIn === null || runIn.kind !== 'after') continue
+        if (owned.has(row.id) || !owned.has(runIn.id)) continue
+        owned.add(row.id)
+        grew = true
+      }
+    }
+    return owned
+  }
+  const currentOwned = ownedByCurrent(todos, currentId)
+  const bySession = todos.filter((t) => currentOwned.has(t.id))
   const scope = filter === 'dir' ? byDir : filter === 'session' ? bySession : todos
   // The open list and the completed list are two halves of one scope: a row is in
   // exactly one of them, which is what makes ticking the round box a MOVE rather
@@ -1562,6 +1704,87 @@ function TodoBoard(props) {
       out[index[key]].items.push(todo)
     }
     return out
+  }
+
+  /**
+   * The scope's rows as execution boxes.
+   *
+   * A box is a SESSION that runs rows, not a directory: ownership is what the
+   * dispatch path follows, so it is what the panel explains. Within a box rows
+   * keep their `order`, and a row with children becomes a container — its
+   * children are indented beneath it and travel with it when it opens a session.
+   *
+   * A row whose owner is gone has nowhere to run, so it gets no box at all:
+   * better absent than parked under a header the user cannot act on. The
+   * current session is always present, so there is somewhere to aim a new row
+   * and the list never looks like it lost everything.
+   *
+   * Boxes are ordered by the newest row they own. The session store carries no
+   * activity timestamp, so "which of my sessions moved last" is answered from
+   * the rows themselves rather than inventing a second clock.
+   */
+  function boxTree(list, currentId) {
+    const childrenOf = new Map()
+    const roots = []
+    for (const todo of list) {
+      const runIn = todo.runIn
+      if (runIn !== undefined && runIn !== null && runIn.kind === 'after') {
+        const bucket = childrenOf.get(runIn.id)
+        if (bucket === undefined) childrenOf.set(runIn.id, [todo])
+        else bucket.push(todo)
+      } else {
+        roots.push(todo)
+      }
+    }
+    // `seen` is the client-side twin of the host's cycle guard: a hand-made knot
+    // must not become an infinite walk here either.
+    const walk = (todo, depth, seen) => {
+      if (seen.has(todo.id)) return []
+      seen.add(todo.id)
+      const out = [{ todo, depth }]
+      const kids = childrenOf.get(todo.id)
+      if (kids !== undefined) for (const kid of kids) out.push(...walk(kid, depth + 1, seen))
+      return out
+    }
+    const boxes = []
+    const byKey = new Map()
+    for (const root of roots) {
+      const key = typeof root.ownerSessionId === 'string' ? root.ownerSessionId : ''
+      if (key === '') continue
+      let box = byKey.get(key)
+      if (box === undefined) {
+        box = { key, entries: [], newest: 0, dirLabel: '' }
+        byKey.set(key, box)
+        boxes.push(box)
+      }
+      const entries = walk(root, 0, new Set())
+      box.entries.push(...entries)
+      for (const entry of entries) {
+        const updated = entry.todo.updatedAt || 0
+        if (updated > box.newest) box.newest = updated
+      }
+      if (box.dirLabel === '') box.dirLabel = root.dirLabel || '(未指定目录)'
+    }
+    boxes.sort((a, b) => b.newest - a.newest || a.key.localeCompare(b.key))
+    if (currentId !== undefined && currentId !== '' && !byKey.has(currentId)) {
+      boxes.unshift({
+        key: currentId,
+        entries: [],
+        newest: 0,
+        dirLabel: cwd === '' ? '(当前会话)' : cwd,
+      })
+    }
+    return boxes
+  }
+
+  /** The header text of one box: who runs it, plus where, on the wide views. */
+  function boxLabel(box) {
+    const row = sessionRows === undefined || sessionRows === null ? undefined : sessionRows[box.key]
+    const title =
+      row !== undefined && row !== null && typeof row.title === 'string' && row.title !== ''
+        ? row.title
+        : box.key.slice(-6)
+    return filter === 'session' ? title : title + ' · ' + box.dirLabel
   }
 
   const groups = dirGroups(visible)
@@ -1889,18 +2112,55 @@ function TodoBoard(props) {
     patch(id, { note: text })
   }
 
-  function dropOn(targetId) {
+  /**
+   * Drop ON a row: become its child.
+   *
+   * Ownership is what decides where a row runs, so this is the drop that
+   * changes it. Only the dragged row's own `runIn` is sent — the host resolves
+   * the target at dispatch time, so a subtree moves with its root without the
+   * panel having to restate anything.
+   */
+  function dropAsChild(parentId) {
     const from = dragId
     setDragId('')
     setOverId('')
-    if (from === '' || from === targetId) return
-    const ids = []
-    for (const t of visible) ids.push(t.id)
+    if (from === '' || from === parentId) return
+    call('patch', { id: from, patch: { runIn: { kind: 'after', id: parentId } } })
+  }
+
+  /** Drop on a box header: move the row to that session. */
+  function dropOnBox(sessionId) {
+    const from = dragId
+    setDragId('')
+    setOverId('')
+    if (from === '' || sessionId === '') return
+    call('patch', { id: from, patch: { runIn: { kind: 'session', id: sessionId } } })
+  }
+
+  /**
+   * Drop in the GAP between rows: reorder only, ownership untouched.
+   *
+   * This is the sibling move. Keeping it on the gap is what lets a row sit
+   * below a container without belonging to it — the case where a row looks
+   * nested but has to stay in this session and run here after the handoff.
+   *
+   * @param afterId - the row to land behind; '' means the very top.
+   */
+  function dropAt(afterId) {
+    const from = dragId
+    setDragId('')
+    setOverId('')
+    if (from === '') return
+    const ids = visible.map((t) => t.id)
     const fromIndex = ids.indexOf(from)
-    const toIndex = ids.indexOf(targetId)
-    if (fromIndex < 0 || toIndex < 0) return
+    if (fromIndex < 0) return
     ids.splice(fromIndex, 1)
-    ids.splice(toIndex, 0, from)
+    const anchor = afterId === '' ? -1 : ids.indexOf(afterId)
+    if (afterId !== '' && anchor < 0) {
+      call('reorder', { ids })
+      return
+    }
+    ids.splice(anchor + 1, 0, from)
     call('reorder', { ids })
   }
 
@@ -1911,12 +2171,16 @@ function TodoBoard(props) {
    *   longer part of the queue: it carries no drag handle and no drop target,
    *   because `dropOn` reorders the OPEN list and the row no longer sits in it.
    */
-  function item(todo, rowIndex, completed) {
+  function item(todo, rowIndex, completed, depth) {
     const finished = completed === true
     let cls = 'dshtb-item'
     if (todo.verified) cls += ' done'
     if (dragId === todo.id) cls += ' dragging'
     if (overId === todo.id && dragId !== '' && dragId !== todo.id) cls += ' over'
+    // Nesting depth inside its container. It is presentation only — ownership
+    // comes from `runIn` — but a row that travels with a container has to LOOK
+    // like it does, or dragging it out later makes no sense.
+    const nest = typeof depth === 'number' && depth > 0 ? Math.min(depth, 4) : 0
 
     // Only a row that has never been handed over can be dispatched by hand.
     // Everything else is either already sent, already finished, or stuck on a
@@ -2229,7 +2493,7 @@ function TodoBoard(props) {
           },
           onDrop: (e) => {
             e.preventDefault()
-            dropOn(todo.id)
+            dropAsChild(todo.id)
           },
           onDragEnd: () => {
             setDragId('')
@@ -2241,6 +2505,7 @@ function TodoBoard(props) {
       'div',
       {
         className: cls,
+        'data-dshtb-nest': String(nest),
         key: todo.id,
         style: { animationDelay: Math.min(rowIndex, 12) * 18 + 'ms' },
         draggable: finished ? false : editId !== todo.id,
@@ -2374,16 +2639,27 @@ function TodoBoard(props) {
           String(openCount),
         ),
         next === undefined
-          ? h('span', { className: 'next q' }, filter === 'dir' ? '当前目录已清空' : '没有未完成待办')
+          ? h(
+              'span',
+              { className: 'next q' },
+              filter === 'session'
+                ? '当前会话已清空'
+                : filter === 'dir'
+                  ? '当前目录已清空'
+                  : '没有未完成待办',
+            )
           : h('span', { className: 'next' }, '下一条 · ' + next.title),
         awaitingVerify > 0 ? h('span', { className: 'dshtb-badge warn' }, '待验 ' + awaitingVerify) : null,
       ),
     )
   }
 
+  // 当前会话 first and default: the board now dispatches by ownership, so the
+  // session you are standing in is the scope that actually explains what will
+  // run next. 目录 and 全部 stay as the wider views.
   const segments = [
-    { id: 'dir', label: '当前目录', count: byDir.filter((t) => !t.verified).length },
     { id: 'session', label: '当前会话', count: bySession.filter((t) => !t.verified).length },
+    { id: 'dir', label: '当前目录', count: byDir.filter((t) => !t.verified).length },
     { id: 'all', label: '全部', count: openCount },
   ].map((seg) =>
     h(
@@ -2398,13 +2674,57 @@ function TodoBoard(props) {
     ),
   )
 
+  // Boxes, not directory headers: dispatch follows ownership, so the panel
+  // explains ownership. 「当前会话」 has exactly one box by construction, which
+  // is why that tab still reads like the flat list it always was.
   let rowIndex = 0
-  const rows = groups.map((group) =>
+  const boxes = boxTree(visible, currentId)
+  // Boxes always exist — the current session is always shown — so emptiness is
+  // a question about ROWS, never about boxes. Counting entries is what keeps
+  // the empty state and the mode hint honest on a fresh board.
+  const openRowCount = boxes.reduce((total, box) => total + box.entries.length, 0)
+  // A drop GAP before every row, and the box header is itself a target. Together
+  // they separate the two moves: the gap reorders within a box, the row reparents,
+  // the header hands the row to another session.
+  const gap = (afterId) =>
+    h('div', {
+      key: 'gap-' + afterId,
+      className: 'dshtb-gap' + (dragId !== '' ? ' live' : ''),
+      onDragOver: (e) => {
+        e.preventDefault()
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+      },
+      onDrop: (e) => {
+        e.preventDefault()
+        dropAt(afterId)
+      },
+    })
+  const rows = boxes.map((box) =>
     h(
       'div',
-      { key: group.key },
-      h('div', { className: 'dshtb-group' }, group.key),
-      group.items.map((todo) => item(todo, rowIndex++)),
+      { key: 'box-' + box.key },
+      h(
+        'div',
+        {
+          className: 'dshtb-group' + (dragId !== '' ? ' droptarget' : ''),
+          onDragOver: (e) => {
+            e.preventDefault()
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+          },
+          onDrop: (e) => {
+            e.preventDefault()
+            dropOnBox(box.key)
+          },
+          title: '把待办拖到这里＝交给这条会话执行',
+        },
+        boxLabel(box),
+      ),
+      box.entries.length === 0
+        ? h('div', { className: 'dshtb-boxempty' }, '这个会话还没有待办')
+        : box.entries.flatMap((entry) => [
+            gap(entry.todo.id),
+            item(entry.todo, rowIndex++, false, entry.depth),
+          ]),
     ),
   )
 
@@ -2734,7 +3054,7 @@ function TodoBoard(props) {
             open: sections.list,
             onToggle: toggleSection,
             body:
-              rows.length === 0
+              openRowCount === 0
                 ? h(
                     'div',
                     { className: 'dshtb-empty', key: 'list-body' },
@@ -2744,9 +3064,11 @@ function TodoBoard(props) {
                       null,
                       completed.length > 0
                         ? '未完成的都清空了（已完成的在下面）'
-                        : filter === 'dir'
-                          ? '当前目录还没有待办'
-                          : '这里还没有待办',
+                        : filter === 'session'
+                          ? '当前会话还没有待办'
+                          : filter === 'dir'
+                            ? '当前目录还没有待办'
+                            : '这里还没有待办',
                     ),
                   )
                 : h(

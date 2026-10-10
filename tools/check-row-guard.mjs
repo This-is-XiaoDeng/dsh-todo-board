@@ -38,7 +38,9 @@
  *      scope tabs go empty while the row labels stay right)
  *  33. any listed session counts as current (the retained flag is ignored)
  *  34. the scope tabs stop narrowing by session
- *  35. the scope tabs stop narrowing by directory
+ *  35. the scope tab groups by planner instead of owner
+ *  36. a container's children drop off the tab that owns the container
+ *  37. the scope tabs stop narrowing by directory
  *
  * Patterns are matched against a normalized (LF) copy because the working tree
  * is checked out with CRLF on Windows, then the replacement is mapped back onto
@@ -141,8 +143,8 @@ const mutants = [
   },
   {
     name: 'a skin erases the section label instead of restyling it',
-    from: "  letter-spacing:0;text-transform:none;padding:10px 14px 4px;gap:5px;\n  font:600 11.5px/1 ${MONO}}",
-    to: "  font-size:0;letter-spacing:0;text-transform:none;padding:10px 14px 4px;gap:5px}",
+    from: '  letter-spacing:0;padding:11px 15px 5px;gap:6px;font:600 12px/1 inherit}',
+    to: '  font-size:0;letter-spacing:0;padding:11px 15px 5px;gap:6px}',
   },
   {
     name: 'a skin rule escapes the panel onto the rest of the GUI',
@@ -150,7 +152,7 @@ const mutants = [
     to: '.dshtb-ic{width:19px;height:19px;font-size:10px}',
   },
   {
-    name: 'one of the two optional skins is never injected',
+    name: 'one of the optional skins is never injected',
     from: "  for (const id of Object.keys(SKIN_CSS)) {",
     to: "  for (const id of Object.keys(SKIN_CSS).slice(0, 1)) {",
   },
@@ -309,9 +311,27 @@ const mutants = [
     to: "      if (row !== null && typeof row === 'object') return row",
   },
   {
+    // Ownership, not authorship. The tab narrows on the sessions that RUN a row,
+    // so mutating this to take everything is the regression that matters: the
+    // tab stops explaining what will actually run.
     name: 'the scope tabs stop narrowing by session',
-    from: '  const bySession = todos.filter((t) => t.sourceSessionId === currentId)',
+    from: '  const bySession = todos.filter((t) => currentOwned.has(t.id))',
     to: '  const bySession = todos.filter(() => true)',
+  },
+  {
+    // The inverse: grouping by the planner lists rows this session must not take,
+    // and hides the ones it must.
+    name: 'the scope tab groups by planner instead of owner',
+    from: '    for (const row of list) if (row.ownerSessionId === sessionId) owned.add(row.id)',
+    to: '    for (const row of list) if (row.sourceSessionId === sessionId) owned.add(row.id)',
+  },
+  {
+    // A container's children are owned by a session that does not exist yet, so
+    // filtering on `ownerSessionId` alone hides them from the very tab that shows
+    // their container — and a row you cannot see is a row you cannot drag out.
+    name: "a container's children drop off the tab that owns the container",
+    from: '  const bySession = todos.filter((t) => currentOwned.has(t.id))',
+    to: '  const bySession = todos.filter((t) => t.ownerSessionId === currentId)',
   },
   {
     name: 'the scope tabs stop narrowing by directory',

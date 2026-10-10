@@ -685,7 +685,7 @@ try {
 
   // ---------------------------------------------------------------- skins
   console.log('\n=== skins (computed styles) ===')
-  const skins = ['ticket', 'plain', 'dense', null]
+  const skins = ['ticket', 'plain', 'dense', 'theme', null]
   const measured = {}
   for (const skin of skins) {
     const raw = await evaluate(cdp, `JSON.stringify(window.__measure(${JSON.stringify(skin)}))`)
@@ -696,6 +696,7 @@ try {
   const untagged = measured.null
   const plain = measured.plain
   const dense = measured.dense
+  const theme = measured.theme
 
   check(
     untagged.head.padding === ticket.head.padding && untagged.sect.fontSize === ticket.sect.fontSize,
@@ -732,6 +733,41 @@ try {
     plain.stateChip.borderRadius !== ticket.stateChip.borderRadius,
     'plain turns the running-state chip into a pill',
     'plain=' + plain.stateChip.borderRadius + ' ticket=' + ticket.stateChip.borderRadius,
+  )
+
+  // Two palettes, and the difference between them is the whole point of the
+  // redesign, so it is measured rather than read off the source: a sheet that
+  // re-binds tokens and then loses the cascade looks exactly like the default,
+  // and a default that quietly followed the host would look like a theme bug.
+  const hostPaper = await evaluate(
+    cdp,
+    `(() => {
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--dsw-alias-bg-overlay)'
+      document.body.appendChild(probe)
+      const bg = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return bg
+    })()`,
+  )
+  check(
+    theme.card.background === hostPaper,
+    '「随主题」 really wears the GUI palette, not just claims to',
+    'theme=' + theme.card.background + ' host=' + hostPaper,
+  )
+  check(
+    ticket.card.background === 'rgb(255, 255, 255)',
+    'and the default look is the white card it promises, on any host theme',
+    String(ticket.card.background),
+  )
+  check(
+    ticket.card.background !== hostPaper,
+    'so the two really are different palettes rather than one sheet twice',
+  )
+  check(
+    theme.stateChip.background !== 'rgba(0, 0, 0, 0)',
+    'a state tint survives the palette swap (a wash, not a hole)',
+    String(theme.stateChip.background),
   )
 
   for (const [name, m] of Object.entries(measured)) {
@@ -900,7 +936,7 @@ try {
        }
        const before = read()
        const after = {}
-       for (const skin of ['plain', 'dense', 'ticket']) {
+       for (const skin of ['plain', 'dense', 'theme', 'ticket']) {
          document.body.setAttribute('data-dshtb-skin', skin)
          after[skin] = read()
        }
@@ -911,7 +947,7 @@ try {
      })()`,
   )
   const outside = JSON.parse(leak)
-  for (const skin of ['plain', 'dense', 'ticket']) {
+  for (const skin of ['plain', 'dense', 'theme', 'ticket']) {
     check(
       JSON.stringify(outside.before) === JSON.stringify(outside.after[skin]),
       'selecting the ' + skin + ' skin changes nothing outside the panel',

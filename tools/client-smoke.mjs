@@ -301,6 +301,12 @@ function todo(over) {
     order: 0,
     sourceSessionId: 's1',
     sourceSessionTitle: '会话',
+    // Ownership is resolved host-side (containers, cycles and all) and shipped
+    // ready to use. The panel groups by THIS, not by `sourceSessionId`: once a
+    // row is re-parented or its container spawns, the session that runs it stops
+    // being the session that planned it.
+    runIn: { kind: 'session', id: 's1' },
+    ownerSessionId: 's1',
     dispatchedAt: 0,
     lostAt: 0,
     state: 'pending',
@@ -1186,11 +1192,24 @@ console.log('rowsech OK')
 // lists nothing is exactly the failure mode being guarded.
 snapshot.todos = [
   todo({ id: 'both', title: '同目录同会话', order: 0 }),
-  todo({ id: 'dir', title: '同目录异会话', order: 1, sourceSessionId: 's2' }),
+  // Planned by s2, so it runs in s2 — and the panel must NOT list it under s1
+  // merely because it shares this directory. That conflation is the bug.
+  todo({ id: 'dir', title: '同目录异会话', order: 1, sourceSessionId: 's2', ownerSessionId: 's2', updatedAt: 5 }),
   todo({
     id: 'other',
     title: '异目录同会话',
     order: 2,
+    dir: 'd:\\elsewhere',
+    dirPath: 'D:\\elsewhere',
+  }),
+  // Planned by s2 but OWNED by s1: a handed-off row. Grouping by planner would
+  // hide it from the session that actually has to run it, so ownership is what
+  // the tab narrows on.
+  todo({
+    id: 'handed',
+    title: '交接来的',
+    order: 3,
+    sourceSessionId: 's2',
     dir: 'd:\\elsewhere',
     dirPath: 'D:\\elsewhere',
   }),
@@ -1203,49 +1222,102 @@ const openTitles = () => findByClass(tree, 'dshtb-t').map(textOf)
 const scopeTab = (label) =>
   findByClass(tree, 'dshtb-seg')[0].children.filter((node) => textOf(node).includes(label))[0]
 
-// The default tab is 「当前目录」, and it has to agree with what the rows say.
+// The default tab is 「当前会话」, and it has to agree with what the rows say.
 assert.deepEqual(
   openTitles(),
-  ['同目录同会话', '同目录异会话'],
-  'the default 「当前目录」 tab lists this directory\'s rows — not nothing, and not everything',
+  ['同目录同会话', '异目录同会话', '交接来的'],
+  'the default 「当前会话」 tab lists the rows this session OWNS — including one it did not plan',
 )
 assert.ok(
-  textOf(scopeTab('当前目录')).includes('2'),
-  'and its count is this directory\'s, not zero',
+  textOf(scopeTab('当前会话')).includes('3'),
+  'and its count is ownership-based, not zero and not everything',
 )
 
-tree = click(scopeTab('当前会话'))
+tree = click(scopeTab('当前目录'))
 assert.deepEqual(
   openTitles(),
-  ['同目录同会话', '异目录同会话'],
-  '「当前会话」 narrows by source session instead of matching nothing',
+  ['同目录异会话', '同目录同会话'],
+  '「当前目录」 narrows by directory — and still groups by owner inside it, so s2\'s newer box leads',
 )
 
 tree = click(scopeTab('全部'))
 assert.deepEqual(
   openTitles(),
-  ['同目录同会话', '同目录异会话', '异目录同会话'],
-  '「全部」 is the union, so the two tabs above really were narrowing',
+  ['同目录异会话', '同目录同会话', '异目录同会话', '交接来的'],
+  '「全部」 is the union, grouped by owning session and ordered box-first — s2 moved last, so its box floats',
 )
 
-// Back to the default: the next section asserts on the 「当前目录」 empty wording.
-tree = click(scopeTab('当前目录'))
-assert.deepEqual(openTitles(), ['同目录同会话', '同目录异会话'], 'and the tabs still work after switching')
+// The rows are grouped into EXECUTION boxes now, not listed flat: box headers
+// name who runs the rows, and on the wide views they carry the directory too.
+const boxTitles = () => findByClass(tree, 'dshtb-group').map(textOf)
+assert.deepEqual(
+  boxTitles(),
+  ['后台会话 · plugin', '会话 · plugin'],
+  'every box names its session, and the wide views add the directory it runs in',
+)
+
+tree = click(scopeTab('当前会话'))
+assert.deepEqual(
+  openTitles(),
+  ['同目录同会话', '异目录同会话', '交接来的'],
+  'and the tabs still work after switching',
+)
+// 「当前会话」 is one box by construction, and it drops the directory suffix —
+// the whole point of that tab is the session you are standing in.
+assert.deepEqual(boxTitles(), ['会话'], 'the default tab is a single box, named without a directory')
 console.log('scope   OK')
+
+// -- containers: a row that takes its children with it ------------------------
+//
+// The shape this feature exists for: todo2 is a `newSession` container, todo3
+// hangs under it and travels into the session todo2 opens, and todo4 sits below
+// todo2 in the list but belongs to THIS session — so it runs here after the
+// handoff instead of being carried away.
+snapshot.todos = [
+  todo({ id: 'todo1', title: '第一步', order: 0 }),
+  todo({ id: 'todo2', title: '第二步开新会话', order: 1, mode: 'newSession' }),
+  todo({
+    id: 'todo3',
+    title: '带走的子级',
+    order: 2,
+    ownerSessionId: '',
+    runIn: { kind: 'after', id: 'todo2' },
+  }),
+  todo({ id: 'todo4', title: '留在本会话', order: 3 }),
+]
+await new Promise((resolve) => setTimeout(resolve, 0))
+tree = render()
+
+assert.deepEqual(
+  openTitles(),
+  ['第一步', '第二步开新会话', '带走的子级', '留在本会话'],
+  'a child owned by a session that does not exist yet still shows on its container\'s tab',
+)
+const nests = () =>
+  findByClass(tree, 'dshtb-item').map((node) => {
+    const title = findByClass(node, 'dshtb-t')[0]
+    return (title === undefined ? '?' : textOf(title)) + ':' + node.props['data-dshtb-nest']
+  })
+assert.deepEqual(
+  nests(),
+  ['第一步:0', '第二步开新会话:0', '带走的子级:1', '留在本会话:0'],
+  'only the container\'s child is indented — todo4 sits below todo2 without being owned by it',
+)
+console.log('nesting OK')
 
 snapshot.todos = [todo({ id: 'c', title: '已验收的', verified: true })]
 await new Promise((resolve) => setTimeout(resolve, 0))
 tree = render()
 tree = click(findByClass(tree, 'dshtb-fold')[0])
 assert.ok(
-  textOf(findByClass(tree, 'dshtb-pill')[0]).includes('当前目录已清空'),
+  textOf(findByClass(tree, 'dshtb-pill')[0]).includes('当前会话已清空'),
   'an empty board says so instead of naming a task',
 )
 console.log('empty   OK')
 
 // -- switchable skins ------------------------------------------------------
 //
-// Three looks, one cycle control in the title bar. What the tests pin down is
+// Four looks, one cycle control in the title bar. What the tests pin down is
 // what can silently rot: that a switch actually reaches the DOM attribute the
 // stylesheets are scoped by, that it is remembered, that it survives parking the
 // panel, and that an id no longer shipped falls back instead of leaving the
@@ -1264,7 +1336,7 @@ const parkedButton = findByClass(tree, 'dshtb-pill')[0]
 if (parkedButton !== undefined) tree = click(parkedButton)
 assert.ok(findByClass(tree, 'dshtb-card')[0] !== undefined, 'the panel is expanded to test the skin control')
 
-assert.equal(skinRoot().props['data-dshtb-skin'], 'ticket', 'the default skin is the ticket look')
+assert.equal(skinRoot().props['data-dshtb-skin'], 'ticket', 'the default skin is the blue-and-white look')
 assert.ok(skinButton() !== undefined, 'the title bar carries the skin control')
 
 // The control must not be confused with the fold control: they are separate
@@ -1279,6 +1351,20 @@ assert.equal(storage.get('dsh.todoBoard.skin.v1'), 'plain', 'the choice is persi
 
 tree = click(skinButton())
 assert.equal(skinRoot().props['data-dshtb-skin'], 'dense', 'clicking again steps to the third skin')
+
+// The fourth look is a palette, not a layout: same sheet, GUI tokens bound in.
+// It has to be reachable by the same one-click cycle, or it is not a skin.
+tree = click(skinButton())
+assert.equal(
+  skinRoot().props['data-dshtb-skin'],
+  'theme',
+  'the theme-following look is part of the cycle too',
+)
+assert.ok(
+  (headStyles.find((node) => node.getAttribute('data-dsh-todo-board-skin') === 'theme') || {})
+    .textContent.includes('--dsw-alias-bg-overlay'),
+  'and it really re-binds the palette to the GUI tokens',
+)
 
 tree = click(skinButton())
 assert.equal(skinRoot().props['data-dshtb-skin'], 'ticket', 'and the cycle wraps to the default')
@@ -1337,20 +1423,28 @@ assert.ok(
   'the dense skin stylesheet is injected',
 )
 assert.ok(
+  headStyles.some((node) => node.getAttribute('data-dsh-todo-board-skin') === 'theme'),
+  'the theme skin stylesheet is injected',
+)
+assert.ok(
   headStyles.some((node) => node.getAttribute('data-dsh-todo-board') === ''),
   'the base stylesheet is injected',
 )
 
-// The three looks must be three looks, not one block registered twice: the two
+// The looks must be different looks, not one block registered twice: the
 // optional sheets have to differ from each other and from the base.
 const sheetOf = (id) =>
   (headStyles.find((node) => node.getAttribute('data-dsh-todo-board-skin') === id) || {}).textContent
-assert.notEqual(sheetOf('plain'), sheetOf('dense'), 'the two optional skins are different sheets')
+for (const id of ['plain', 'dense', 'theme']) {
+  for (const other of ['plain', 'dense', 'theme'].filter((entry) => entry !== id)) {
+    assert.notEqual(sheetOf(id), sheetOf(other), id + ' and ' + other + ' are different sheets')
+  }
+}
 
 // Every rule in an optional sheet must be scoped to its own skin, or selecting
 // one skin would restyle the others — and, worse, anything a scoped selector
 // missed would leak out of the panel onto the rest of the GUI.
-for (const id of ['plain', 'dense']) {
+for (const id of ['plain', 'dense', 'theme']) {
   // Comments are stripped first: they carry prose (and punctuation) that a
   // brace-splitting scan would otherwise read as part of a selector.
   const body = sheetOf(id).replace(/\/\*[\s\S]*?\*\//g, '')
@@ -1379,7 +1473,7 @@ console.log('skincss OK')
 // section is hiding, and a group heading is the directory a row belongs to.
 
 const labelRules = []
-for (const id of ['plain', 'dense']) {
+for (const id of ['plain', 'dense', 'theme']) {
   const body = sheetOf(id).replace(/\/\*[\s\S]*?\*\//g, '')
   for (const rule of body.split('}').filter((chunk) => chunk.includes('{'))) {
     const [selector, declarations] = [rule.split('{')[0].trim(), rule.split('{')[1] || '']
