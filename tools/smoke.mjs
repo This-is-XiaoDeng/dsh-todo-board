@@ -32,6 +32,9 @@ let connectionService
 const DIR = 'D:\\smoke\\project'
 const agent = {
   id: 'session-smoke',
+  // The handoff summary asks the model this session's own route; without one the
+  // summary is skipped by design rather than guessed.
+  options: { provider: 'stub-provider', model: 'stub-model' },
   session: { header: { id: 'session-smoke', cwd: DIR } },
   sent: [],
   followup(message) {
@@ -67,7 +70,8 @@ function spawnStubAgent(id) {
 
 const agentsStub = {
   list: () => [...live.values()],
-  get: (id) => live.get(id),
+  // The planning session is live too, so a handoff can look its own route up.
+  get: (id) => (id === agent.id ? agent : live.get(id)),
   async create(options) {
     // The factory is handed the caller's session id; honour it like the real one.
     const spawned = spawnStubAgent(options.sessionId)
@@ -204,6 +208,8 @@ function makeCtx() {
         }
       }
       if (key === 'agents') return agentsStub
+      if (key === 'llm') return registered.llm
+      if (key === 'sessionQuery') return registered.sessionQuery
       if (key === 'agentPresets') return presetsStub
       if (key === 'attachments') return attachmentsStub
       if (key === 'workspaceRegistry') return workspaceStub
@@ -399,7 +405,7 @@ assert.equal(added.todos[0].schedule, '', 'a plain add carries no schedule')
 assert.equal(added.todos[0].aiDone, false)
 assert.deepEqual(
   Object.keys(added.todos[0]).sort(),
-  ['aiDone', 'dirLabel', 'id', 'imageCount', 'mode', 'schedule', 'state', 'title', 'verified'],
+  ['aiDone', 'dirLabel', 'id', 'imageCount', 'mode', 'parentId', 'schedule', 'state', 'title', 'verified'],
   'tool rows carry exactly the declared schema keys',
 )
 assert.equal(added.todos[0].state, 'pending', 'a brand-new row has never been dispatched')
@@ -1400,6 +1406,53 @@ assert.equal(planNotes.length, 3, 'the plan is still three rows after a note edi
 // -- all-or-nothing ---------------------------------------------------------
 
 const countBefore = (await planRows()).length
+// `parent` nests a step under an EARLIER step in the same batch. This is how the
+// model says 「open a clean session and carry the rest of the work into it」
+// instead of defaulting every step to resume. A directory of its own, so the
+// batch-count assertions below still measure only their own rows.
+const NEST_DIR = 'D:\\smoke\\nest'
+const nested = await registered.tool.execute(
+  {
+    action: 'add',
+    dir: NEST_DIR,
+    items: [
+      { title: '容器：开新会话', mode: 'newSession' },
+      { title: '被带走的子级', mode: 'resume', parent: 0 },
+      { title: '留在本会话', mode: 'resume' },
+    ],
+  },
+  exec,
+)
+assert.equal(nested.todos.length, 3, 'a batch may nest its own steps')
+const nestedRows = (await registered.tool.execute({ action: 'list', dir: NEST_DIR }, exec)).todos
+const container = nestedRows[0]
+const child = nestedRows[1]
+assert.equal(
+  child.parentId,
+  container.id,
+  'the child names its container by id — so flipping that container to newSession later carries the child along, with no rewrite',
+)
+assert.equal(container.parentId, '', 'and the container itself hangs off nothing')
+assert.equal(nestedRows[2].parentId, '', 'a step with no parent stays owned by the planning session')
+
+// A parent may only point BACKWARDS. That rule is what makes a cycle impossible
+// to express rather than something to detect after the board is already knotted.
+for (const bad of [-1, 2, 3, 9, 1.5]) {
+  const rejected = await registered.tool.execute(
+    {
+      action: 'add',
+      dir: NEST_DIR,
+      items: [{ title: 'A', mode: 'resume' }, { title: 'B', mode: 'resume' }, { title: '坏 parent', parent: bad }],
+    },
+    exec,
+  )
+  assert.ok(
+    rejected.message.includes('parent'),
+    'a parent pointing at ' + bad + ' refuses the batch: ' + rejected.message,
+  )
+  assert.equal(rejected.todos.length, 0, 'and lands nothing')
+}
+
 const badPlan = await registered.tool.execute(
   {
     action: 'add',
@@ -1447,6 +1500,99 @@ assert.equal((await planRows()).length, countBefore, 'and nothing was written')
 const single = await registered.tool.execute({ action: 'add', title: '单条仍照旧', dir: PLAN_DIR }, exec)
 assert.ok(single.message.includes('已新增待办'), 'a plain single add still takes the old path')
 assert.equal(single.todos.length, 1, 'and returns exactly one row')
+
+// -- the automatic handoff summary ------------------------------------------
+//
+// A `newSession` row carries only its title and note into the new session, so an
+// empty note means the handoff lands with no context at all. This is the rule
+// that fixes that — but ONLY for an empty note, and never at the cost of the
+// handoff itself.
+
+const HANDOFF_DIR = 'D:\\smoke\\handoff'
+
+const bare = await registered.tool.execute(
+  { action: 'add', dir: HANDOFF_DIR, items: [{ title: '空 note 的容器', mode: 'newSession' }] },
+  exec,
+)
+/** One panel snapshot row, including the note — the tool's own list omits it. */
+async function handoffPanelRow(id) {
+  const response = fakeResponse()
+  const request = { method: 'GET', url: '/', headers: BROWSER_HEADERS }
+  await apiRoute.handler(request, response)
+  const body = JSON.parse(response.box.body)
+  return body.todos.find((row) => row.id === id)
+}
+
+const bareRow = (await registered.tool.execute({ action: 'list', dir: HANDOFF_DIR }, exec)).todos[0]
+let asked = 0
+registered.llm = {
+  async *stream() {
+    asked++
+    yield { type: 'text-delta', index: 0, text: '不该被问' }
+  },
+}
+registered.sessionQuery = { async readSurface() { throw new Error('不该被读') } }
+await postJson({ action: 'run', id: bareRow.id, sessionId: '' })
+// An unreadable source log is not a failed handoff: the row still spawns, and
+// nothing was asked of a model that could not have been helped anyway.
+assert.equal(asked, 0, 'a failing read ends the summary, not the handoff')
+
+// Now with a readable session, and an empty note.
+let promptSeen = ''
+registered.llm = {
+  async *stream(options) {
+    asked++
+    promptSeen = options.messages[0].content[0].text
+    assert.ok(options.maxTokens > 0, 'the summary is capped, not unbounded')
+    yield { type: 'text-delta', index: 0, text: '- 目标：改完归属语义\n- 已完成：runIn 字段' }
+  },
+}
+registered.sessionQuery = {
+  async readSurface() {
+    return {
+      events: [
+        { message: { content: [{ type: 'text', text: '用户要求改派发语义' }] } },
+        { message: { content: [{ type: 'text', text: '我正在改 fireDue' }] } },
+      ],
+    }
+  },
+}
+await registered.tool.execute(
+  { action: 'add', dir: HANDOFF_DIR, items: [{ title: '有空 note 的容器', mode: 'newSession' }] },
+  exec,
+)
+const secondRow = (await registered.tool.execute({ action: 'list', dir: HANDOFF_DIR }, exec)).todos[1]
+asked = 0
+await postJson({ action: 'run', id: secondRow.id, sessionId: '' })
+assert.equal(asked, 1, 'an empty note asks the model exactly once')
+assert.ok(
+  promptSeen.includes('正在改 fireDue'),
+  'and the transcript it summarizes really is the source session\'s',
+)
+const summarized = await handoffPanelRow(secondRow.id)
+assert.ok(
+  summarized.note.startsWith('【自动交接摘要'),
+  'the summary lands in the note, behind a marker the user can recognise and edit',
+)
+assert.ok(summarized.note.includes('已完成：runIn 字段'), 'and it is the model\'s own words')
+
+// A note the user wrote is never overwritten.
+await registered.tool.execute(
+  {
+    action: 'add',
+    dir: HANDOFF_DIR,
+    items: [{ title: '有 note 的容器', mode: 'newSession', note: '我自己写的交接说明' }],
+  },
+  exec,
+)
+const writtenRow = (await registered.tool.execute({ action: 'list', dir: HANDOFF_DIR }, exec)).todos[2]
+asked = 0
+await postJson({ action: 'run', id: writtenRow.id, sessionId: '' })
+assert.equal(asked, 0, 'a note the user wrote is never replaced by a summary')
+const untouched = await handoffPanelRow(writtenRow.id)
+assert.equal(untouched.note, '我自己写的交接说明', 'and the user\'s own words survive intact')
+registered.llm = null
+registered.sessionQuery = null
 
 // -- the approval dialog shows the PLAN, not just "add" ----------------------
 
