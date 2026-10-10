@@ -41,6 +41,10 @@
  *  35. the scope tab groups by planner instead of owner
  *  36. a container's children drop off the tab that owns the container
  *  37. the scope tabs stop narrowing by directory
+ *  38. an orphaned child is dropped from the list again (counted nowhere,
+ *      rendered nowhere — promoted to a root is the fix)
+ *  39. a style tag loses its data-plugin ownership mark (another plugin's HMR
+ *      deletes our styles — the claimStyles adoption chain, problem 3)
  *
  * Patterns are matched against a normalized (LF) copy because the working tree
  * is checked out with CRLF on Windows, then the replacement is mapped back onto
@@ -362,6 +366,23 @@ const mutants = [
     name: 'a stored size is rounded up out of nothing (the line sizes the card)',
     from: "  return isFinite(size) && size > 0 ? size : null",
     to: '  return isFinite(size) && size > 0 ? size : MIN_W',
+  },
+  {
+    // v0.13.1: orphan promotion. Reverting to the unconditional bucket drops any
+    // child whose parent is missing from the scope — counted nowhere, rendered
+    // nowhere. The orphan test above must catch exactly this.
+    name: "an orphaned child is dropped from the list again (silently)",
+    from: "        runIn.kind === 'after' &&\n        present.has(runIn.id)",
+    to: "        runIn.kind === 'after'",
+  },
+  {
+    // v0.13.1: style-tag ownership. Without `data-plugin`, dsh-client-modules'
+    // claimStyles adopts this tag for whichever plugin materializes next, and
+    // that plugin's HMR replace then deletes our styles. The main CSS tag is
+    // the one that styles the whole panel — losing it is the visible failure.
+    name: "the main style tag loses its data-plugin ownership mark",
+    from: "      style.setAttribute('data-dsh-todo-board', '')\n      // Pre-tag with our module id: dsh-client-modules' claimStyles adopts any\n      // untagged <style> for whichever plugin materializes next, and the next\n      // HMR replace of THAT plugin would then delete ours. `data-plugin` keeps\n      // ownership where it belongs (same convention as the official packages).\n      style.setAttribute('data-plugin', 'dsh-todo-board')\n      style.textContent = CSS",
+    to: "      style.setAttribute('data-dsh-todo-board', '')\n      style.textContent = CSS",
   },
 ]
 

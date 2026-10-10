@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.1
+
+**修复：开出的新会话自己那一页看不到自己的待办（计数 3、行数 0）。**
+
+- **问题**：`newSession` 容器开出的会话，切到它自己的页签时数字显示 3，下面却是空的。0.13.0 的面板按「归属会话」分框，但宿主下发的 `ownerSessionId` 用的是 `effectiveTarget`（沿容器往上走到**规划会话**）——spawned 会话的 `runIn` 指向容器、容器的 `runIn` 不是 `session` kind，走到底还是规划者，所以开出的会话永远不是自己待办的 owner，一条都进不了自己的框。
+- **宿主修复（`plain()`）**：`ownerSessionId` 改按 `targetSessionId` 报告——**跟行走**：已派发的行报它实际运行的会话，spawned 容器报它开出的那个会话；只有 newSession 容器在**开出会话之前**回退到 `effectiveTarget`（规划会话），保证规划者 spawn 前不丢这行。`pendingOwned` / `dispatch` 用的直接是 `effectiveTarget`，派发与续跑语义不变。
+- **客户端修复（`boxTree()`）**：孤儿行提升。以前一个 `after` 子级的父级不在当前 scope（被验收掉、在别的页签、或容器归属另一个会话）会被**静默丢弃**——计数里没有、渲染里没有。现在提升为根：看不见的行是再也拖不出来的行。
+- 测试：`smoke` 新增「spawned 容器归属它开出的会话」「改派行归属实际运行的会话」断言；`client-smoke` 新增 `spawned`（站在开出的会话里看自己的三条）与 `orphan`（父级已验收的子级仍渲染）两段；`check-host-guard` 变异体 **16 → 18**、`check-row-guard` 变异体 **42 → 44**（各新增两条，均被抓到）。
+
+**修复：面板样式偶发被别的插件清掉（`.dim-jh-*` 徽标样式消失的同一根因）。**
+
+- **问题**：宿主的 `dsh-client-modules` 在插件物化时会把**所有没打 `data-plugin` 标记的 `<style>` 认领**给当前插件（`claimStyles`），而那个插件下次 HMR 替换时会删掉自己名下的样式——一个没打标记的 `<style>` 会被下一个物化的插件「领养」，随后随它的更新一起被删。0.13.0 的重做里本插件的样式标签没打标记：任何一个别的插件热更新，整个面板的样式就没了；dsh-codearts-auth（jethub）的徽标样式也是同一根因（那边已单独修）。
+- **修复**：本插件注入的**每一个** style 标签（主样式 + 三套皮肤）都打上 `data-plugin="dsh-todo-board"`，与官方包同一约定。样式从此只随自己的更新生灭。
+
 ## 0.13.0
 
 **版本门从「声明」变成「真拦」：保留 `engines.dsh`，另加 `@deepseek-ai/dsh` peer 依赖。**

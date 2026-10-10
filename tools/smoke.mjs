@@ -603,6 +603,16 @@ const snapshotResponse = fakeResponse()
 await apiRoute.handler({ method: 'GET', headers: BROWSER_HEADERS }, snapshotResponse)
 const panelRow = JSON.parse(snapshotResponse.box.body).todos.find((todo) => todo.id === boundId)
 assert.equal(panelRow.runSessionId, spawnedAgents[0].id, 'the created session is bound on the row')
+// v0.13.1: ownership follows the run, not the planner. The spawned session's
+// panel must see this container as its own row — before the fix `plain()` used
+// `effectiveTarget`, which walks to the planning session for a row whose
+// `runIn` points at anything but a 'session', hiding the row from the very
+// session it spawned.
+assert.equal(
+  panelRow.ownerSessionId,
+  spawnedAgents[0].id,
+  'a spawned container is OWNED by the session it opened (the panel groups by owner)',
+)
 
 const secondRun = await postJson({ action: 'run', id: boundId, sessionId: agent.id })
 assert.equal(secondRun.ok, true, 'the second run succeeds')
@@ -759,6 +769,27 @@ const orphanList = await registered.tool.execute({ action: 'list', all: true }, 
 const orphanRow = orphanList.todos.find((todo) => todo.id === orphanId)
 assert.equal(orphanRow.state, 'lost', 'the tool reports the same state')
 assert.ok(orphanList.message.includes('目标会话丢失'), 'and names it in the readout')
+
+// v0.13.1: ownership follows the run. A resume row planned against a session
+// that has since died, then handed by hand to a live one, must be OWNED by the
+// session it runs on — the panel groups by owner, and reporting the dead
+// planning session parks the row under a box nobody can act on. (The binding
+// assert earlier in this file covers the newSession twin of this.)
+const rerouted = await postJson({
+  action: 'create',
+  title: '改派到别的会话',
+  mode: 'resume',
+  dir: DIR,
+  sessionId: 'session-that-is-gone',
+})
+assert.equal(rerouted.ok, true)
+const reroutedRun = await postJson({ action: 'run', id: rerouted.todo.id, sessionId: agent.id })
+assert.equal(reroutedRun.ok, true, 'an explicit destination rescues the row')
+assert.equal(
+  (await readRow(rerouted.todo.id)).ownerSessionId,
+  agent.id,
+  'a dispatched resume row is OWNED by the session it was handed to, not the dead one it was planned against',
+)
 
 // Re-targeting the row clears the verdict: it is queue-eligible again.
 const rescued = await postJson({ action: 'patch', id: orphanId, patch: { mode: 'newSession' } })

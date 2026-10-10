@@ -195,6 +195,26 @@ const mutants = [
     from: "          title: { type: 'string', description: '这一条待办的内容（一句话，可独立验收）。' },",
     to: "          title: { type: 'string', format: 'uri', description: '这一条待办的内容（一句话，可独立验收）。' },",
   },
+  {
+    // v0.13.1: ownership follows the run. The spawned session's panel must own
+    // the container that opened it — reverting to the plain container walk
+    // resolves the row back to the planning session, and the spawned session's
+    // tab loses the row it is standing in (problem 2's exact symptom).
+    name: 'a spawned container is owned by the planner again (the spawned tab goes blind)',
+    suite: 'tools/smoke.mjs',
+    from: '      ownerSessionId: target !== \'\' ? target : effectiveTarget(todo),',
+    to: '      ownerSessionId: effectiveTarget(todo),',
+  },
+  {
+    // v0.13.1, same feature: an explicit run binding is the strongest ownership
+    // claim there is. Dropping the runSessionId arm makes a dispatched row keep
+    // reporting its pre-dispatch owner, so the panel never shows 已派发 where
+    // it actually runs.
+    name: 'a dispatched row keeps reporting its pre-dispatch owner',
+    suite: 'tools/smoke.mjs',
+    from: '    if (todo.runSessionId !== \'\') return todo.runSessionId',
+    to: '    if (false) return todo.runSessionId',
+  },
 ]
 
 /** `true` when the named suite passes. Output is discarded on purpose. */

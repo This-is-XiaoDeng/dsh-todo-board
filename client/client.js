@@ -109,7 +109,7 @@ const SKINS = [
  * host and browser halves of one release are one build. `client-smoke.mjs` pins
  * the two together, because a footer that lies is worse than no footer.
  */
-const BUILD = '0.13.0'
+const BUILD = '0.13.1'
 
 /**
  * Severity filters in the log view, most severe first.
@@ -1719,16 +1719,30 @@ function TodoBoard(props) {
    * current session is always present, so there is somewhere to aim a new row
    * and the list never looks like it lost everything.
    *
+   * A child whose parent is missing from this scope — verified away, owned by
+   * another tab, or its container spawned into a session this view cannot see —
+   * is promoted to a root instead of dropped: a row you cannot see is a row
+   * you cannot drag out again.
+   *
    * Boxes are ordered by the newest row they own. The session store carries no
    * activity timestamp, so "which of my sessions moved last" is answered from
    * the rows themselves rather than inventing a second clock.
    */
   function boxTree(list, currentId) {
+    // The orphan rule above, applied at bucketing time: a parent that is not
+    // in this scope can never be walked to, so its child becomes a root here.
+    const present = new Set()
+    for (const todo of list) present.add(todo.id)
     const childrenOf = new Map()
     const roots = []
     for (const todo of list) {
       const runIn = todo.runIn
-      if (runIn !== undefined && runIn !== null && runIn.kind === 'after') {
+      if (
+        runIn !== undefined &&
+        runIn !== null &&
+        runIn.kind === 'after' &&
+        present.has(runIn.id)
+      ) {
         const bucket = childrenOf.get(runIn.id)
         if (bucket === undefined) childrenOf.set(runIn.id, [todo])
         else bucket.push(todo)
@@ -3193,6 +3207,11 @@ exports.apply = function apply(ctx) {
     () => {
       const style = document.createElement('style')
       style.setAttribute('data-dsh-todo-board', '')
+      // Pre-tag with our module id: dsh-client-modules' claimStyles adopts any
+      // untagged <style> for whichever plugin materializes next, and the next
+      // HMR replace of THAT plugin would then delete ours. `data-plugin` keeps
+      // ownership where it belongs (same convention as the official packages).
+      style.setAttribute('data-plugin', 'dsh-todo-board')
       style.textContent = CSS
       document.head.appendChild(style)
       return () => style.remove()
@@ -3209,6 +3228,7 @@ exports.apply = function apply(ctx) {
       () => {
         const style = document.createElement('style')
         style.setAttribute('data-dsh-todo-board', '')
+        style.setAttribute('data-plugin', 'dsh-todo-board')
         style.setAttribute('data-dsh-todo-board-skin', id)
         style.textContent = SKIN_CSS[id]
         document.head.appendChild(style)

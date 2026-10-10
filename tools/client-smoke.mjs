@@ -510,12 +510,29 @@ function sessionsSnapshot() {
   }
 }
 
+/**
+ * The same store seen from the OTHER session: `s2` is the one the main view
+ * retains. This is the spawned-session view — a `newSession` container that
+ * has opened `s2`, and rows whose `ownerSessionId` the host resolved to `s2`.
+ */
+function sessionsSnapshotFromSpawned() {
+  const snapshot = sessionsSnapshot()
+  snapshot.byId.s2.retainedBy = { mainView: 1 }
+  snapshot.byId.s1.retainedBy = {}
+  return snapshot
+}
+
+// `activeSessions` lets one test stand in the OTHER session — the spawned one —
+// without touching any other call site: `render()` reads it, so the view point
+// survives the re-renders a click triggers.
+let activeSessions = null
+
 function render() {
   cursor = 0
   rendering = true
   let tree
   try {
-    tree = TodoBoard({ useSessions: (select) => select(sessionsSnapshot()) })
+    tree = TodoBoard({ useSessions: (select) => select(activeSessions ?? sessionsSnapshot()) })
   } finally {
     rendering = false
   }
@@ -1305,6 +1322,93 @@ assert.deepEqual(
 )
 console.log('nesting OK')
 
+// -- the spawned session's own view -----------------------------------------
+//
+// v0.13.1, problem 2: a `newSession` container that has spawned must be OWNED
+// by the session it opened — the host now reports `ownerSessionId` from where
+// the row runs, not where it was planned. Standing in the spawned session
+// (s2), the board has to list the container AND its still-undispatched
+// children, because `effectiveTarget` of a child resolves through the spawned
+// container to s2. Before the fix the host shipped the planner as owner for
+// the container, the spawned session's tab counted 3 and rendered zero rows.
+snapshot.todos = [
+  todo({
+    id: 'container',
+    title: '容器：开出的会话',
+    order: 0,
+    mode: 'newSession',
+    runSessionId: 's2',
+    ownerSessionId: 's2',
+  }),
+  todo({
+    id: 'kid1',
+    title: '跟过去的子级一',
+    order: 1,
+    ownerSessionId: 's2',
+    runIn: { kind: 'after', id: 'container' },
+  }),
+  todo({
+    id: 'kid2',
+    title: '跟过去的子级二',
+    order: 2,
+    ownerSessionId: 's2',
+    runIn: { kind: 'after', id: 'container' },
+  }),
+]
+activeSessions = sessionsSnapshotFromSpawned()
+await new Promise((resolve) => setTimeout(resolve, 0))
+tree = render()
+
+assert.deepEqual(
+  openTitles(),
+  ['容器：开出的会话', '跟过去的子级一', '跟过去的子级二'],
+  'the session a container opened OWNS the container and its children — 3 rows, not 0',
+)
+assert.equal(
+  textOf(scopeTab('当前会话')).includes('3'),
+  true,
+  'and the tab counts all three',
+)
+activeSessions = null
+console.log('spawned OK')
+
+// -- orphans: a child whose parent is out of scope -----------------------------
+//
+// v0.13.1, same release: `boxTree` used to bucket every `after` row under its
+// parent and then only walk from roots present in scope — a child whose parent
+// is missing from the scope (verified away, another tab, or a container owned
+// by a different session) was silently DROPPED: counted nowhere, rendered
+// nowhere. The fix promotes it to a root instead. This fixture has the child
+// on this tab with its parent absent, and the assert is that it still renders.
+snapshot.todos = [
+  todo({ id: 'gone', title: '已被验收的父级', order: 0, verified: true }),
+  todo({
+    id: 'orphan',
+    title: '父级已验收的子级',
+    order: 1,
+    runIn: { kind: 'after', id: 'gone' },
+  }),
+]
+await new Promise((resolve) => setTimeout(resolve, 0))
+tree = render()
+
+// `openTitles` reads the whole tree, and the verified parent legitimately
+// renders in the 已完成 section below — so scope the read to the open list's
+// own container (`.dshtb-list` wraps only the queue).
+const openListTitles = () =>
+  findByClass(findByClass(tree, 'dshtb-list')[0], 'dshtb-t').map(textOf)
+assert.deepEqual(
+  openListTitles(),
+  ['父级已验收的子级'],
+  'an orphaned child still renders — promoted to a root instead of silently dropped',
+)
+assert.equal(
+  findByClass(tree, 'dshtb-item')[0].props['data-dshtb-nest'],
+  '0',
+  'and it renders un-nested: there is no parent here to nest under',
+)
+console.log('orphan  OK')
+
 snapshot.todos = [todo({ id: 'c', title: '已验收的', verified: true })]
 await new Promise((resolve) => setTimeout(resolve, 0))
 tree = render()
@@ -1429,6 +1533,17 @@ assert.ok(
 assert.ok(
   headStyles.some((node) => node.getAttribute('data-dsh-todo-board') === ''),
   'the base stylesheet is injected',
+)
+// v0.13.1: every tag we inject must claim its module id. dsh-client-modules'
+// claimStyles adopts any untagged <style> for whichever plugin materializes
+// next, and that plugin's HMR replace then deletes it — the base sheet losing
+// its mark is how a whole panel's styling vanishes on an unrelated plugin's
+// code change.
+assert.ok(
+  headStyles
+    .filter((node) => node.getAttribute('data-dsh-todo-board') === '')
+    .every((node) => node.getAttribute('data-plugin') === 'dsh-todo-board'),
+  'every injected style tag is marked data-plugin=dsh-todo-board (no orphan styles to be claimed and deleted by another plugin\'s HMR)',
 )
 
 // The looks must be different looks, not one block registered twice: the
