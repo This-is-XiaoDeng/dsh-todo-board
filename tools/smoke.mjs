@@ -311,6 +311,18 @@ assert.equal(registered.tool?.name, 'todo_board', 'todo_board registered')
 assert.equal(registered.tool.parameters.required[0], 'action')
 assert.equal(registered.section?.name, 'todo-board', 'prompt section registered')
 assert.equal(registered.section.order, 150)
+// The two todo lists must stay apart IN WRITING, or a model will push ordinary
+// in-session progress onto the user's durable board — and the two places will
+// then disagree about what is done. design-ai-dispatch.md §4 step 3 pins this.
+assert.ok(
+  registered.section.text.includes('会话级'),
+  'the prompt section keeps the board apart from the harness session todo',
+)
+assert.ok(
+  registered.tool.description.includes('会话级') &&
+    registered.tool.description.includes('不要逐条写进板子'),
+  'and the tool description carries the same boundary',
+)
 assert.equal(registered.routes.length, 2, 'api and image routes')
 assert.equal(registered.routes[0].path, '/dsh-todo-board/image')
 assert.equal(registered.routes[1].path, '/dsh-todo-board/api')
@@ -1662,6 +1674,14 @@ assert.ok(
 assert.ok(
   registered.skill.content.includes('用 TODO 板把这件事拆成可执行的步骤'),
   'the skill body embeds the paste-able template',
+)
+// And the same division of labour the prompt section states: the board plans
+// work ACROSS sessions; the built-in session todo tracks the model's own
+// progress INSIDE one. A planning manual that stayed silent about the split
+// would let the model mirror every board row back onto the board its own way.
+assert.ok(
+  registered.skill.content.includes('会话级'),
+  'the planning skill explains the split with the harness session todo',
 )
 
 assert.ok(registered.command !== null, 'the /todo command is registered')

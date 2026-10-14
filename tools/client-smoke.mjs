@@ -2405,4 +2405,61 @@ assert.equal(
 )
 console.log('note    OK')
 
+// -- 「打开即收起」: an option for the NEXT page load, not an action now -------
+//
+// The feature is a promise a fresh page load must keep, which is exactly the
+// part a plain render test never exercises — the useState initializer runs on a
+// real first mount, so `remount()` IS the next page load here.
+
+let startParkedButton = () =>
+  findByClass(tree, 'dshtb-link').filter((n) => textOf(n) === '打开即收起')[0]
+assert.equal(startParkedButton() === undefined, false, 'the status line hosts the option')
+assert.equal(
+  startParkedButton().props['aria-pressed'],
+  'false',
+  'the default is: page loads expanded',
+)
+
+tree = click(startParkedButton())
+const reparkedButton = findByClass(tree, 'dshtb-link').filter(
+  (n) => textOf(n) === '打开即收起',
+)[0]
+assert.equal(reparkedButton.props['aria-pressed'], 'true', 'toggling reports the on state')
+assert.equal(
+  storage.get('dsh.todoBoard.startParked.v1'),
+  'true',
+  'and stores the choice for the next load',
+)
+assert.equal(
+  findByClass(tree, 'dshtb-card').length,
+  1,
+  'toggling the option does NOT fold the panel you are looking at',
+)
+
+// The promise is kept: a fresh mount starts parked, as one line.
+tree = remount()
+assert.equal(findByClass(tree, 'dshtb-pill').length, 1, 'a fresh page load honors the choice')
+assert.equal(findByClass(tree, 'dshtb-card').length, 0, 'parked, not an empty expanded board')
+
+// And it is an option, not a trap: the panel unfolds the same way it always
+// did, and switching the option off restores the expanded default for good.
+tree = remount()
+tree = click(findByClass(tree, 'dshtb-pill')[0])
+assert.equal(findByClass(tree, 'dshtb-card').length, 1, 'the parked line still unfolds on click')
+tree = click(
+  findByClass(tree, 'dshtb-link').filter((n) => textOf(n) === '打开即收起')[0],
+)
+assert.equal(
+  storage.get('dsh.todoBoard.startParked.v1'),
+  'false',
+  'turning it off writes an explicit false',
+)
+tree = remount()
+assert.equal(
+  findByClass(tree, 'dshtb-card').length,
+  1,
+  'off restores the expanded default on the next load',
+)
+console.log('park-on-opening  OK')
+
 console.log('\nall browser-half smoke checks passed')

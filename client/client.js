@@ -109,7 +109,7 @@ const SKINS = [
  * host and browser halves of one release are one build. `client-smoke.mjs` pins
  * the two together, because a footer that lies is worse than no footer.
  */
-const BUILD = '0.13.2'
+const BUILD = '0.14.0'
 
 /**
  * Severity filters in the log view, most severe first.
@@ -404,6 +404,9 @@ button.dshtb-chip:hover{background:var(--tb-haze);color:var(--tb-ink)}
   color:var(--tb-dim);font:inherit;cursor:pointer;transition:background .12s,color .12s}
 .dshtb-link:hover{background:var(--tb-haze);color:var(--tb-blue-deep)}
 .dshtb-link.off{opacity:.5;cursor:not-allowed}
+/* The 「打开即收起」 option reads ON straight from aria-pressed: one attribute,
+   one visual state, no second class to forget when the label changes. */
+.dshtb-link[aria-pressed="true"]{background:var(--tb-haze);color:var(--tb-blue-deep)}
 /* Shipped Cordis popup: parked under this panel, right-aligned to it.
    !important beats the inline left/bottom the panel computes from its anchor. */
 [data-dsh-todo-cordis]>div:first-child{left:auto !important;bottom:auto !important;
@@ -1082,6 +1085,35 @@ function saveSkin(id) {
 }
 
 /**
+ * Whether a fresh page load parks the panel as one line.
+ *
+ * A separate choice from the panel's live fold state: folding is a deliberate
+ * once-per-session act the panel keeps on its own, while 「打开即收起」 speaks for
+ * EVERY page load — most readers open the tab to glance at the next todo and
+ * would rather start with one quiet line. Stored as literal `'true'`/`'false'`
+ * (not JSON) so a manual read of localStorage answers the question directly,
+ * and `'false'` is distinct from absence: someone who turned the option off
+ * means it, even though 'false' and "never chose" behave identically.
+ */
+const START_PARKED_KEY = 'dsh.todoBoard.startParked.v1'
+
+function loadStartParked() {
+  try {
+    return window.localStorage.getItem(START_PARKED_KEY) === 'true'
+  } catch (err) {
+    return false
+  }
+}
+
+function saveStartParked(value) {
+  try {
+    window.localStorage.setItem(START_PARKED_KEY, value ? 'true' : 'false')
+  } catch (err) {
+    /* storage unavailable */
+  }
+}
+
+/**
  * Fit a card geometry inside the viewport.
  *
  * A `null` width or height means "the stylesheet decides", and stays null: only
@@ -1225,7 +1257,11 @@ function TodoBoard(props) {
     return byId === undefined || byId === null ? {} : byId
   })
 
-  const [open, setOpen] = React.useState(true)
+  // 「打开即收起」speaks for the next page load, so it decides the INITIAL state
+  // only: after this first value the live fold state is the user's own muscle
+  // memory — the option never un-folds a panel the user already expanded.
+  const [open, setOpen] = React.useState(() => !loadStartParked())
+  const [startParked, setStartParked] = React.useState(loadStartParked)
   const [data, setData] = React.useState(null)
   const [err, setErr] = React.useState('')
   const [draft, setDraft] = React.useState('')
@@ -1503,6 +1539,22 @@ function TodoBoard(props) {
   /** Park the whole panel as a single line, or unfold it again. */
   function togglePanel() {
     setOpen((current) => !current)
+  }
+
+  /**
+   * Flip 「打开即收起」: whether the NEXT page load starts parked.
+   *
+   * Deliberately NOT a change to the live state — the button sits in the status
+   * line and the panel is open right now — so that changing it is not also a
+   * surprise fold of the window you are looking at. Keeping the two choices
+   * separate is the whole design of the option.
+   */
+  function toggleStartParked() {
+    setStartParked((current) => {
+      const next = !current
+      saveStartParked(next)
+      return next
+    })
   }
 
   /**
@@ -3150,6 +3202,23 @@ function TodoBoard(props) {
             h('span', { title: '还没验收的条数' }, '未验收 ' + openCount),
             awaitingVerify > 0 ? h('span', { title: 'AI 已完成、等你验收' }, '· 待验 ' + awaitingVerify) : null,
             h('span', { className: 'dshtb-sp' }),
+            h(
+              'button',
+              {
+                className: 'dshtb-link',
+                // An option, not an action: it changes nothing on the board and
+                // nothing on screen right now — only whether the NEXT page load
+                // starts parked. `aria-pressed` carries the on/off state so both
+                // assistive tech and the CSS selector can read truth from one
+                // place, without inventing a second class for it.
+                'aria-pressed': startParked ? 'true' : 'false',
+                title:
+                  '打开网页时把面板收起成一行（当前：' + (startParked ? '打开即收起' : '打开即展开') + '）\n' +
+                  '这个选择记在浏览器里，对下一次刷新生效；点击切换',
+                onClick: toggleStartParked,
+              },
+              '打开即收起',
+            ),
             verifiedCount > 0
               ? h(
                   'button',
